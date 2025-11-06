@@ -4,25 +4,19 @@ $host = getenv('DB_HOST');
 $username = getenv('DB_USER');
 $password = getenv('DB_PASS');
 $dbname = getenv('DB_NAME');
-$port = getenv('DB_PORT');
+$port = getenv('DB_PORT'); // A DigitalOcean-nél a port elengedhetetlen!
 $sslmode = getenv('DB_SSLMODE'); // 'REQUIRED'
-
-// Ez az útvonal a letöltött tanúsítványhoz
-$ca_cert_path = "/workspace/ca-certificate.crt";
 
 // A DigitalOcean Managed MySQL-hez SSL kapcsolat szükséges
 $conn = mysqli_init();
-
-// Ellenőrizzük, hogy a tanúsítványfájl olvasható-e
-if (!is_readable($ca_cert_path)) {
-     die("❌ Hiba: A CA tanúsítványfájl nem olvasható itt: " . $ca_cert_path);
+if ($sslmode === 'require') {
+    // A belső (VPC) kapcsolathoz nincs szükség a ca-cert.crt fájlra,
+    // de az SSL flag-re igen.
+    mysqli_ssl_set($conn, NULL, NULL, NULL, NULL, NULL);
 }
 
-// Beállítjuk az SSL-t, ÉS megadjuk a tanúsítvány elérési útját
-mysqli_ssl_set($conn, NULL, NULL, $ca_cert_path, NULL, NULL);
-
-// Csatlakozás a mysqli_real_connect segítségével
-if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, (int)$port, NULL, MYSQLI_CLIENT_SSL)) {
+// Csatlakozás a mysqli_real_connect segítségével, ami kezeli a portot és az SSL-t
+if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, (int)$port, NULL, $sslmode === 'require' ? MYSQLI_CLIENT_SSL : 0)) {
     // Ha a kapcsolat sikertelen, írjuk ki a hibát és álljunk le
     die("❌ Connection failed: " . mysqli_connect_error());
 }
@@ -3899,4 +3893,5 @@ print_r(   $imageArr);
 	addlog("Execution Finished", "INFO");
 	fclose($logfile);
 ?>
+
 
