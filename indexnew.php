@@ -51,7 +51,7 @@ echo "✅ Feed downloaded successfully<br>";
 
 // ✅ Open CSV feed
 if (($handle = fopen($tempCsv, "r")) !== FALSE) {
-    $headers = fgetcsv($handle, 10000, ",");
+    $headers = fgetcsv($handle, 10000, ",", "\"");
   $normalizedHeaders = array_map(function($h) {
     return strtolower(trim($h));
 }, $headers);
@@ -196,6 +196,7 @@ if (($handle = fopen($tempCsv, "r")) !== FALSE) {
 
 $conn->close();
 ?>
+
 
 
 
