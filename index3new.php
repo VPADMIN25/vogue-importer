@@ -43,7 +43,7 @@ $temp = fopen("php://memory", 'r+');
 fwrite($temp, $feedContent);
 rewind($temp);
 
-while (($data = fgetcsv($temp, 20000, ",")) !== FALSE) {
+while (($data = fgetcsv($temp, 20000, ",", "\"")) !== FALSE) {
     $rows[] = $data;
 }
 fclose($temp);
@@ -273,6 +273,7 @@ GRAPHQL;
     curl_close($ch);
 }
 ?>
+
 
 
 
