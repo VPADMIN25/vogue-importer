@@ -1,254 +1,226 @@
 <?php
+// helpers/shopifyGraphQL.php (VÉGLEGES VERZIÓ V3)
+// A Shopify GraphQL API-hoz szükséges összes függvényt tartalmazza.
 
-function addShopifyProduct_graphql($token, $shopurl, $variables){
-    $query = <<<GRAPHQL
-    mutation productCreate(\$input: ProductInput, \$media: [CreateMediaInput!], \$product: ProductCreateInput) {
-        productCreate(input: \$input, media: \$media, product: \$product) {
+ini_set('max_execution_time', 0);
+set_time_limit(0);
+
+/**
+ * Alap cURL kérés küldése a Shopify GraphQL végpontra.
+ */
+function send_graphql_request($token, $shopurl, $query, $variables = []) {
+    $payload = json_encode(['query' => $query, 'variables' => $variables]);
+    
+    $ch = curl_init("https://$shopurl/admin/api/2024-10/graphql.json");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            "Content-Type: application/json",
+            "X-Shopify-Access-Token: $token"
+        ],
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $payload
+    ]);
+    
+    $response = curl_exec($ch);
+    $responseDecoded = json_decode($response, true);
+    
+    if (curl_errno($ch)) {
+        // Hiba kezelése (pl. hálózati probléma)
+        // echo "cURL Hiba: " . curl_error($ch) . "\n";
+        curl_close($ch);
+        return null;
+    }
+    
+    curl_close($ch);
+    return $responseDecoded;
+}
+
+/**
+ * Lekérdezi egy Shopify Raktárhely (Location) GID-jét név alapján.
+ */
+function getShopifyLocationGid($token, $shopurl, $locationName) {
+    $query = <<<'GRAPHQL'
+query {
+    locations(first: 20) {
+        nodes {
+            id
+            name
+        }
+    }
+}
+GRAPHQL;
+
+    $response = send_graphql_request($token, $shopurl, $query);
+
+    if (isset($response['data']['locations']['nodes'])) {
+        foreach ($response['data']['locations']['nodes'] as $location) {
+            if ($location['name'] === $locationName) {
+                return $location['id'];
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Lekérdezi a Termék, Variáns és Inventory Item GID-jeit egy SKU (a mi Generált SKU-nk) alapján.
+ * EZ FONTOS AZ ÖRÖKBEFOGADÁSHOZ!
+ */
+function productQueryBySku_graphql($token, $shopurl, $sku) {
+    // A query a `productVariants` kollekcióban keres SKU-ra.
+    $query = <<<'GRAPHQL'
+query productVariantBySku($sku: String!) {
+  productVariants(first: 1, query: $sku) {
+    nodes {
+      id
+      sku
+      inventoryItem {
+        id
+      }
+      product {
+        id
+      }
+    }
+  }
+}
+GRAPHQL;
+
+    // Fontos, hogy az SKU-t stringként és pontos egyezésre kényszerítve adjuk át a lekérdezésben.
+    // Így csak a teljes SKU-ra keres, nem csak egy részére.
+    $variables = ['sku' => "sku:'" . str_replace("'", "\\'", $sku) . "'"];
+    
+    $response = send_graphql_request($token, $shopurl, $query, $variables);
+    
+    if (isset($response['data']['productVariants']['nodes'][0])) {
+        $variantNode = $response['data']['productVariants']['nodes'][0];
+        // Ellenőrizzük, hogy a talált SKU pontosan egyezik-e
+        if ($variantNode['sku'] === $sku) {
+             return [
+                'product_gid' => $variantNode['product']['id'],
+                'variant_gid' => $variantNode['id'],
+                'inventory_gid' => $variantNode['inventoryItem']['id']
+            ];
+        }
+    }
+    return null;
+}
+
+/**
+ * Új termék létrehozása (index2new.php használja)
+ */
+function productCreate_graphql($token, $shopurl, $variables) {
+    $query = <<<'GRAPHQL'
+mutation productCreate($input: ProductInput!) {
+    productCreate(input: $input) {
         product {
             id
-            variants(first: 10) {
-            nodes {
-                id
-                barcode
-                inventoryItem {
-                id
+            variants(first: 250) { // Variánsok GID-jének visszakérése
+                nodes {
+                    id
+                    sku
+                    inventoryItem {
+                        id
+                    }
                 }
-            }
             }
         }
         userErrors {
             field
             message
         }
-        }
-    }
-    GRAPHQL;
-    $data = [
-        'query' => $query,
-        'variables' => $variables,
-    ];
-    
-    $url = "https://$shopurl/admin/api/2024-10/graphql.json";
-    $headers = [
-        'Content-Type: application/json',
-        'X-Shopify-Access-Token: ' . $token,
-    ];
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256');
-    
-    $response = curl_exec($ch);
-    sleep(1);
-    
-    curl_close($ch);
-    $responseDecoded = json_decode($response, true);
-
-    // Check if there are user errors in the response
-    if (!empty($responseDecoded['data']['productCreate']['userErrors'])) {
-        $userErrors = $responseDecoded['data']['productCreate']['userErrors'];
-    
-        // Debug: Print the user errors
-        print_r($userErrors);
-    
-        // Loop through each error
-        foreach ($userErrors as $error) {
-            // Check if the error message matches the specific error
-            if (
-                isset($error['message']) &&
-                $error['message'] === 'The file is not supported on trial accounts. Select a plan to upload this file.'
-            ) {
-                // Check if 'media' exists in $variables
-                if (isset($variables['media'])) {
-                    // Remove the 'media' key
-                    unset($variables['media']); // Directly modify the $variables array
-    
-                    // Debug: Print the updated $variables
-    
-                    // Call the function again with updated variables
-                    $response  =  addShopifyProduct_graphql($token, $shopurl, $variables);
-                    //$responseDecoded = json_decode($response, true);
-                    print_r($responseDecoded);
-                    return  $response ;
-                }
-            }
-        }
-    }
-    else{
-    
-         print_r($responseDecoded);
-    
-      return $responseDecoded;
     }
 }
+GRAPHQL;
+    return send_graphql_request($token, $shopurl, $query, $variables);
+}
 
-function updateShopifyVariant_graphql($token, $shopurl, $variables){
-    global $conn;
+/**
+ * Termék státuszának módosítása (ARCHIVED / ACTIVE)
+ */
+function productUpdateStatus_graphql($token, $shopurl, $product_gid, $status) {
+    // Termék GID-et vár (pl. 'gid://shopify/Product/123456789')
     $query = <<<'GRAPHQL'
-    mutation productVariantsBulkUpdate($media: [CreateMediaInput!],$productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-    productVariantsBulkUpdate( media: $media,productId: $productId, variants: $variants) {
-        product {
-        id
+mutation productUpdateStatus($productId: ID!, $status: ProductStatus!) {
+    productUpdate(input: {id: $productId, status: $status}) {
+        product { id status }
+        userErrors { field message }
+    }
+}
+GRAPHQL;
+    $variables = [
+        'productId' => $product_gid, 
+        'status' => $status
+    ];
+    return send_graphql_request($token, $shopurl, $query, $variables);
+}
+
+/**
+ * Teljes termék felülírása (Cím, Leírás, Vendor, Képek, Status)
+ * Használva a needs_update=10 (Örökbefogadás/Javítás) esetén.
+ */
+function productFullUpdate_graphql($token, $shopurl, $product_gid, $input) {
+    $query = <<<'GRAPHQL'
+mutation productUpdate($input: ProductInput!) {
+    productUpdate(input: $input) {
+        product { id title }
+        userErrors { field message }
+    }
+}
+GRAPHQL;
+    // A $product_gid-et már beletettük az $input 'id' mezőjébe a hívó szkriptben (index3new.php)
+    $variables = ['input' => $input];
+    return send_graphql_request($token, $shopurl, $query, $variables);
+}
+
+
+/**
+ * Több Variáns Árának Tömeges Frissítése (Bulk Update)
+ * A needs_update=1 és 10 esetén használatos.
+ */
+function productVariantsBulkUpdate_graphql($token, $shopurl, $product_gid, $variants) {
+    $query = <<<'GRAPHQL'
+mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        userErrors { field message }
+        job {
+          id
+          status
         }
-        productVariants {
-        id
-        metafields(first: 2) {
-            edges {
-            node {
-                namespace
-                key
-                value
-            }
-            }
-        }
+    }
+}
+GRAPHQL;
+
+    $variables = [
+        'productId' => $product_gid,
+        'variants' => $variants
+    ];
+    return send_graphql_request($token, $shopurl, $query, $variables);
+}
+
+
+/**
+ * Több Inventory Item Készletének Tömeges Beállítása
+ * A needs_update=1 és 10 esetén használatos.
+ */
+function inventorySetQuantities_graphql($token, $shopurl, $sets) {
+    $query = <<<'GRAPHQL'
+mutation inventorySetQuantities($sets: [InventorySetQuantityInput!]!) {
+    inventorySetQuantities(input: { setQuantities: $sets }) {
+        inventoryAdjustmentGroup {
+            createdAt
+            reason
         }
         userErrors {
-        field
-        message
+            field
+            message
         }
     }
-    }
-    GRAPHQL;
-
-    $payload = json_encode([
-        "query" => $query,
-        "variables" => $variables,
-    ]);
-    $url = "https://$shopurl/admin/api/2024-10/graphql.json";
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "X-Shopify-Access-Token: $token",
-    ]);
-    $response = curl_exec($ch);
-    $responseDecoded = json_decode($response, true);
-    print_r( $responseDecoded );
-
-    if (curl_errno($ch)) {
-        echo "cURL error: " . curl_error($ch);
-    } else {
-        if(!empty($responseDecoded['data']['productVariantsBulkUpdate']['userErrors'])){
-            return $responseDecoded;
-          }
-         return $responseDecoded;
-    }
-    // Close cURL
-    curl_close($ch);
 }
-function createShopifyVaraint_graphql($shopurl,$token,$variables){
-    addlog(json_encode($variables),"INFO");
-    $query = <<<GRAPHQL
-    mutation productVariantsBulkCreate(\$media: [CreateMediaInput!],\$productId: ID!, \$variants: [ProductVariantsBulkInput!]!) {
-    productVariantsBulkCreate(media: \$media,productId: \$productId, variants: \$variants) {
-        userErrors {
-        field
-        message
-        }
-        product {
-        id
-        }
-        productVariants {
-        id
-        title
-        barcode
-        inventoryItem{
-            id
-        }
-        selectedOptions {
-            name
-            value
-        }
-        }
-    }
-    }
-    GRAPHQL;
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, "https://$shopurl/admin/api/2024-10/graphql.json"); 
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "X-Shopify-Access-Token: $token"
-    ]);
-    $data = json_encode([
-        "query" => $query,
-        "variables" => $variables
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    $response = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        echo 'Error:' . curl_error($ch);
-    } else {
-        $result = json_decode($response, true);
-        addlog("createShopifyVaraint response :","INFO");
-        addlog(json_encode($result),"INFO");
-        if(!empty($result['data']['productVariantsBulkCreate']['userErrors'])){
-            return false;
-        }
-        return $result;
-    }
-    return $result;
-
-
-    curl_close($ch);
-}
-function updateShopifyInventory_graphql($token, $shopurl, $variables){
-    global $conn;
-    $query = <<<QUERY
-        mutation InventorySet(\$input: InventorySetQuantitiesInput!) {
-          inventorySetQuantities(input: \$input) {
-            inventoryAdjustmentGroup {
-              createdAt
-              reason
-              changes {
-                name
-                delta
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-        QUERY;			
-        $payload = json_encode([
-            'query' => $query,
-            'variables' => $variables
-        ]);
-        $ch = curl_init("https://$shopurl/admin/api/2024-10/graphql.json");
-        
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "X-Shopify-Access-Token: $token"
-        ]);
-        
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-        
-        $response = curl_exec($ch);
-        
-        $responseDecoded = json_decode($response,true);
-        print_r($responseDecoded);
-
-        if(!empty($responseDecoded['data']['inventorySetQuantities']['userErrors'])){
-            return false;
-        }else{
+GRAPHQL;
     
-            return true;
-        }
+    $variables = ['sets' => $sets];
+    
+    return send_graphql_request($token, $shopurl, $query, $variables);
 }
-
 ?>
