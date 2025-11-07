@@ -39,6 +39,9 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
 /**
  * Lekérdezi egy Shopify Raktárhely (Location) GID-jét név alapján.
  */
+/**
+ * Ideiglenes Hibakereső Verzió: Kilistázza az ÖSSZES raktárhely nevét.
+ */
 function getShopifyLocationGid($token, $shopurl, $locationName) {
     $query = <<<'GRAPHQL'
 query {
@@ -53,14 +56,27 @@ GRAPHQL;
 
     $response = send_graphql_request($token, $shopurl, $query);
 
+    // IDEIGLENES HIBAKERESŐ KÓD
+    echo "\n\n==========================================\n";
+    echo "❌ HIBA! A KERESETT NÉV: '$locationName'\n";
+    echo "==========================================\n";
+    echo "A SHOPIFY ÁLTAL VISSZAADOTT RAKTÁRHELYEK:\n";
+    
+    $found = false;
     if (isset($response['data']['locations']['nodes'])) {
         foreach ($response['data']['locations']['nodes'] as $location) {
+            echo "-> NEVE: '" . $location['name'] . "'\n";
             if ($location['name'] === $locationName) {
+                $found = true;
                 return $location['id'];
             }
         }
     }
-    return null;
+    
+    echo "==========================================\n\n";
+
+    if ($found) return $location['id']; // Ha megtaláltuk, adjuk vissza
+    return null; // Ha nem találtuk meg
 }
 
 /**
@@ -224,3 +240,4 @@ GRAPHQL;
     return send_graphql_request($token, $shopurl, $query, $variables);
 }
 ?>
+
