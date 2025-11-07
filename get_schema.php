@@ -1,7 +1,5 @@
 <?php
 // Ez a szkript "megröntgenezi" a 'shopifyproducts' tábla szerkezetét.
-
-// 1. Csatlakozás az adatbázishoz (a működő kód)
 $host = getenv("DB_HOST");
 $username = getenv("DB_USER");
 $password = getenv("DB_PASS");
@@ -16,11 +14,9 @@ if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NUL
 echo "✅ Adatbázis-kapcsolat sikeres.<br><br>";
 mysqli_set_charset($conn, "utf8");
 
-// 2. Az SQL parancs futtatása (A tábla szerkezetének lekérdezése)
 $sql = "SHOW CREATE TABLE `shopifyproducts`;";
 
 echo "<b>Parancs futtatása:</b> $sql <br><br>";
-
 $result = $conn->query($sql);
 
 if ($result && $result->num_rows > 0) {
@@ -33,6 +29,5 @@ if ($result && $result->num_rows > 0) {
 } else {
     echo "❌ HIBA: Nem sikerült lekérdezni a tábla szerkezetét. " . $conn->error . "<br>";
 }
-
 $conn->close();
 ?>
