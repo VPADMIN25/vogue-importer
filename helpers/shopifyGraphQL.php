@@ -8,17 +8,18 @@ set_time_limit(0);
  * 1. Alap cURL kérés küldése a Shopify GraphQL végpontra.
  * A legstabilabb '2024-04' API verziót használja, és kikapcsolja az SSL ellenőrzést.
  */
+/**
+ * VÉGLEGES HIBAKERESŐ VERZIÓ: Kiírja a nyers cURL hibaüzenetet és a választ.
+ */
 function send_graphql_request($token, $shopurl, $query, $variables = []) {
     $payload = json_encode(['query' => $query, 'variables' => $variables]);
     
-    // Kényszerítsük a legstabilabb LTS verzióra: 2024-04
+    // Kényszerítsük a legstabilabb API verzióra: 2024-04
     $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        // Biztonsági beállítás: Felhős környezetben gyakran leblokkol az SSL-tanúsítvány láncolat hibája miatt.
-        CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_SSL_VERIFYPEER => false, // Kikapcsoljuk a tanúsítvány ellenőrzését
         CURLOPT_SSL_VERIFYHOST => false,
-        
         CURLOPT_HTTPHEADER => [
             "Content-Type: application/json",
             "X-Shopify-Access-Token: $token"
@@ -28,22 +29,27 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     ]);
     
     $response = curl_exec($ch);
-    $responseDecoded = json_decode($response, true);
+    $curl_error = curl_error($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     
+    // ----------------------------------------
+    // !!! DIAGNOSZTIKA !!!
+    // ----------------------------------------
+    echo "\n\n!!! SHOPIFY KOMMUNIKÁCIÓS HIBA !!!\n";
+    echo "  HTTP KÓD: $http_code\n";
+    echo "  cURL HIBA: $curl_error\n";
+    echo "  NYERS VÁLASZ: " . substr($response, 0, 500) . "...\n";
+    echo "!!! ---------------------------- !!!\n\n";
+    // ----------------------------------------
+
     if (curl_errno($ch)) {
         curl_close($ch);
-        return null;
+        return null; // Sikertelen cURL kapcsolat
     }
     
     curl_close($ch);
-    
-    // Throttling/hiba ellenőrzés
-    if (isset($responseDecoded['errors']) || (isset($responseDecoded['data']) && is_null($responseDecoded['data']))) {
-         // Itt kapunk üzenetet, ha hiba volt a query-ben (pl. üres lista)
-    }
-    return $responseDecoded;
+    return json_decode($response, true);
 }
-
 
 /**
  * 2. Lekérdezi egy Shopify Raktárhely (Location) GID-jét név alapján.
@@ -211,3 +217,4 @@ GRAPHQL;
     
     return send_graphql_request($token, $shopurl, $query, $variables);
 }
+
