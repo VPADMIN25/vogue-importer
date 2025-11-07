@@ -3597,7 +3597,7 @@ print_r(   $imageArr);
 						// EZ A JAVÍTOTT KÓD
 						$conn->query("INSERT INTO shopifyproducts(user_id, productid, variantid, dateofmodification) 
                             		VALUES ('" . $user_id . "', '" . mysqli_real_escape_string($conn, $shopifyproductid) . "', '" . mysqli_real_escape_string($conn, $shopifyvariantid) . "', NOW())");
-											addlog("bulkcreatevariantssingle productVariants response comleted  ","INFO");
+									addlog("bulkcreatevariantssingle productVariants response comleted  ","INFO");
 			}
 		}
 		
@@ -3892,6 +3892,7 @@ print_r(   $imageArr);
 	addlog("Execution Finished", "INFO");
 	fclose($logfile);
 ?>
+
 
 
 
