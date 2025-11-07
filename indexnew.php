@@ -1,246 +1,267 @@
 <?php
+// indexnew.php (Végleges Verzió V3 - A "Mester Agy")
+// Logika: A `Variant SKU` a CSOPORTOSÍTÓ kulcs.
+// A `generated_sku` (Variant SKU + Opciók) az EGYEDI kulcs.
+
 ini_set('max_execution_time', 0);
 set_time_limit(0);
+ini_set('memory_limit', '1024M');
 
-// ✅ Database Connection (Using DigitalOcean Environment Variables - VPC SSL Mode)
+echo "<h2>FUTÁS INDUL: 1. Lépés - BEOLVASÁS és SZINKRONIZÁLÁS (Generált SKU alapú)</h2>";
+
+// --- 1. ADATBÁZIS KAPCSOLAT ---
 $host = getenv('DB_HOST');
 $username = getenv('DB_USER');
 $password = getenv('DB_PASS');
 $dbname = getenv('DB_NAME');
 $port = (int)getenv('DB_PORT');
-$sslmode = getenv('DB_SSLMODE'); // 'REQUIRED'
-
+$sslmode = getenv('DB_SSLMODE');
 $conn = mysqli_init();
-
-// Ez a kulcs: Beállítjuk az SSL-t, de NEM ellenőrizzük a tanúsítványt
-if ($sslmode === 'require') {
-    mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
-}
-
-// Csatlakozás a mysqli_real_connect segítségével, SSL flag-et kényszerítve
+if ($sslmode === 'require') { mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false); }
 if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NULL, MYSQLI_CLIENT_SSL)) {
-    die("❌ Connection failed (VPC SSL Handshake Failed): " . mysqli_connect_error());
+    die("❌ Connection failed: " . mysqli_connect_error());
 }
-mysqli_set_charset($conn, "utf8");
-echo "✅ Database Connected Successfully (indexnew.php)<br>";
+mysqli_set_charset($conn, "utf8mb4");
+echo "✅ Adatbázis-kapcsolat sikeres.<br>";
 
-// ✅ Remote feed URL
-$feedUrl = "https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv";
-// TODO: Ezt a szkriptet paraméterezni kell a 'stockfirmati' feedre is!
-
-// ✅ Download CSV feed
-$tempCsv = sys_get_temp_dir() . "/feed_" . time() . ".csv";
-$fileContent = @file_get_contents($feedUrl);
-
-if ($fileContent === false) {
-    die("❌ Failed to fetch feed from URL: $feedUrl");
+// --- 2. SHOPIFY KREDENCIÁLISOK ---
+require_once("helpers/shopifyGraphQL.php");
+$shopurl = getenv('SHOPIFY_SHOP_URL');
+$token = getenv('SHOPIFY_API_TOKEN');
+if (empty($shopurl) || empty($token)) {
+    die("❌ Hiányzó Környezeti Változók: SHOPIFY_SHOP_URL vagy SHOPIFY_API_TOKEN.");
 }
+echo "✅ Shopify kredenciálisok betöltve ($shopurl).<br>";
 
-// Save feed temporarily
-file_put_contents($tempCsv, $fileContent);
-echo "✅ Feed downloaded successfully<br>";
+// --- 3. RAKTÁRHELYEK (LOCATIONS) ELLENŐRZÉSE ---
+$location_name_1 = "Italy Vogue Premiere Warehouse 1";
+$location_name_2 = "Italy Vogue Premiere Warehouse 2";
+if (empty(getShopifyLocationGid($token, $shopurl, $location_name_1)) || empty(getShopifyLocationGid($token, $shopurl, $location_name_2))) {
+    die("❌ Kritikus hiba: A '$location_name_1' vagy '$location_name_2' raktárhely nem található!");
+}
+echo "✅ Raktárhelyek GID-jei sikeresen ellenőrizve.<br>";
 
-// ✅ Open CSV feed
-if (($handle = fopen($tempCsv, "r")) !== FALSE) {
+// --- 4. A FUTÁS IDŐBÉLYEGE ---
+$run_timestamp = date('Y-m-d H:i:s');
+echo "ℹ️ Futás időbélyege: $run_timestamp <br>";
+
+// --- 5. FEED KONFIGURÁCIÓ ---
+$feeds_to_process = [
+    [
+        'url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/stockfirmati_final_feed_huf.csv',
+        'location_index' => 1, 'quantity_column_name' => 'Stockfirmati Raktár Inventory Qty', 'currency' => 'huf'
+    ],
+    [
+        'url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv',
+        'location_index' => 2, 'quantity_column_name' => 'Peppela Inventory Qty', 'currency' => 'huf'
+    ],
+];
+
+// --- 6. SQL ELŐKÉSZÍTÉS ---
+// Lekérdezés: Ismerjük ezt a GENERÁLT SKU-t?
+$stmt_check_db = $conn->prepare("SELECT id, shopifyproductid, needs_update, qty_location_1, qty_location_2 FROM shopifyproducts WHERE generated_sku = ?");
+// Frissítés: Meglévő sor frissítése (GENERÁLT SKU alapján)
+$price_col = "price_huf";
+$stmt_update_db = $conn->prepare(
+    "UPDATE shopifyproducts SET 
+        $price_col = ?, qty_location_1 = ?, qty_location_2 = ?, 
+        needs_update = ?, last_seen_in_feed = ?,
+        handle = ?, title = ?, body = ?, vendor = ?, type = ?, tags = ?, 
+        variant_sku = ?, barcode = ?, grams = ?,
+        img_src = ?, img_src_2 = ?, img_src_3 = ?,
+        option1_name = ?, option1_value = ?, option2_name = ?, option2_value = ?
+     WHERE generated_sku = ?"
+);
+// Beszúrás: Teljesen új (vagy örökbefogadott) sor
+$stmt_insert_db = $conn->prepare(
+    "INSERT INTO shopifyproducts (
+        handle, title, body, vendor, type, tags, 
+        variant_sku, generated_sku, barcode, grams, inventory_tracker,
+        img_src, img_src_2, img_src_3, 
+        option1_name, option1_value, option2_name, option2_value,
+        price_huf, qty_location_1, qty_location_2, 
+        shopifyproductid, shopifyvariantid, shopifyinventoryid,
+        needs_update, last_seen_in_feed, 
+        user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())"
+);
+
+// --- 7. FEED FELDOLGOZÁS ---
+$total_rows_processed = 0; $total_adopted = 0; $total_created = 0; $total_updated = 0;
+
+foreach ($feeds_to_process as $feed) {
+    echo "<hr><h3>Feed feldolgozása: {$feed['url']}</h3>";
+    $feedContent = @file_get_contents($feed['url']);
+    if ($feedContent === false) {
+        echo "❌ Hiba a feed letöltése közben: {$feed['url']}<br>";
+        continue;
+    }
+    $temp = fopen("php://memory", 'r+');
+    fwrite($temp, $feedContent);
+    rewind($temp);
     
-    // JAVÍTVA: Hozzáadva a "\" escape karakter
-    $headers = fgetcsv($handle, 10000, ",", "\"");
-    $normalizedHeaders = array_map(function($h) {
-        return strtolower(trim($h));
-    }, $headers);
-
-    // Allowed DB fields
-    $dbFields = [
-        "title","description","item_specific","condition_val","condition_note",
-        "brand","product_type","storecategoryid","storecategoryid2",
-        "option1name","option2name","ebayitemid","shopifyproductid",
-        "newflag","quantityflag","priceflag","block","duplicate","deleted",
-        "status","errdetails","site","channel_id","searchstring","sellerid"
+    $headers = fgetcsv($temp, 0, ",", "\"");
+    $normalizedHeaders = array_map('trim', array_map('strtolower', $headers));
+    
+    $map = [
+        'handle' => array_search('handle', $normalizedHeaders),
+        'title' => array_search('title', $normalizedHeaders),
+        'body' => array_search('body (html)', $normalizedHeaders),
+        'vendor' => array_search('vendor', $normalizedHeaders),
+        'type' => array_search('type', $normalizedHeaders),
+        'tags' => array_search('tags', $normalizedHeaders),
+        'sku' => array_search('variant sku', $normalizedHeaders), // CSOPORTOSÍTÓ
+        'price' => array_search('variant price', $normalizedHeaders),
+        'barcode' => array_search('variant barcode', $normalizedHeaders), // Csak adat
+        'grams' => array_search('variant grams', $normalizedHeaders),
+        'tracker' => array_search('variant inventory tracker', $normalizedHeaders),
+        'img1' => array_search('image src', $normalizedHeaders),
+        'img2' => array_search('image src 2', $normalizedHeaders),
+        'img3' => array_search('image src 3', $normalizedHeaders),
+        'opt1_name' => array_search('option1 name', $normalizedHeaders),
+        'opt1_val' => array_search('option1 value', $normalizedHeaders),
+        'opt2_name' => array_search('option2 name', $normalizedHeaders),
+        'opt2_val' => array_search('option2 value', $normalizedHeaders),
+        'qty' => array_search(strtolower($feed['quantity_column_name']), $normalizedHeaders),
+        'is_changed' => array_search('is changed', $normalizedHeaders)
     ];
 
-    // Header mapping (Ez az, ami összeköti a CSV-t az adatbázissal)
-    $customMap = [
-        "type"            => "product_type",
-        "handle"          => "handle",
-        "option1 name"    => "option1name",
-        "option2 name"    => "option2name",
-        "body (html)"     => "description",
-        "tags"            => "tags", // ÚJ: Tags importálása
-        "vendor"          => "brand"  // 'Vendor' oszlopot a 'brand' adatbázis mezőbe
-    ];
-
-    $mapping = [];
-    foreach ($normalizedHeaders as $index => $headerLower) {
-        if (isset($customMap[$headerLower])) {
-            $mapping[$index] = $customMap[$headerLower];
-        } elseif (in_array($headerLower, $dbFields)) {
-            $mapping[$index] = $headerLower;
-        }
+    if ($map['sku'] === false || $map['qty'] === false || $map['price'] === false || $map['is_changed'] === false) {
+        echo "❌ Kritikus oszlop hiányzik a feedből! (SKU, Qty, Price, or Is Changed).<br>";
+        continue;
     }
     
-    // Kép oszlopok definiálása
-    $imageColumns = ["image src", "image src 2", "image src 3"];
-    $rowCount = 0;
-    $skippedCount = 0;
-
-    echo "<br>🟢 Importing new products (Using VARIANT SKU logic)...<br>";
-
-    // ✅ Read each row from feed
-    // JAVÍTVA: Hozzáadva a "\" escape karakter
-    while (($data = fgetcsv($handle, 10000, ",", "\"")) !== FALSE) {
-
-        $insertData = [];
-        $descriptionValue = "";
-        $tagsValue = "";
-
-        // Adatok beolvasása a "mapping" alapján
-        foreach ($mapping as $index => $field) {
-            if (!isset($data[$index])) continue;
-            
-            $value = $data[$index]; // Nem escape-elünk még, majd csak SQL-nél
-
-            if ($field === "description") {
-                $descriptionValue = "<body>" . $value . "</body>";
-            }
-            if ($field === "tags") {
-                $tagsValue = $value;
-            }
-
-            $insertData[$field] = $value;
-        }
-
-        // ✅ Kulcsmezők ellenőrzése (A TE LOGIKÁD SZERINT)
-        if (empty($insertData['variant sku'])) {
-            echo "⚠️ Skipping row: Missing Variant SKU<br>";
+    // Sorok feldolgozása
+    while (($data = fgetcsv($temp, 0, ",", "\"")) !== FALSE) {
+        $total_rows_processed++;
+        
+        // --- AZ ÚJ KULCS GENERÁLÁSA ---
+        $variantSkuGroup = trim($data[$map['sku']]);
+        $option1Val = trim($data[$map['opt1_val']]);
+        $option2Val = trim($data[$map['opt2_val']]);
+        
+        $generated_sku = $variantSkuGroup; // Alap
+        if (!empty($option1Val)) $generated_sku .= "-" . sanitize_key($option1Val);
+        if (!empty($option2Val)) $generated_sku .= "-" . sanitize_key($option2Val);
+        
+        if (empty($variantSkuGroup)) {
+            echo "⚠️ Sor átugorva: Hiányzó Variant SKU (Csoportosító kulcs).<br>";
             continue;
         }
 
-        $handle = isset($insertData['handle']) ? $conn->real_escape_string($insertData['handle']) : "";
-        $variantSku = $conn->real_escape_string($insertData['variant sku']);
-        $product_id_to_use = 0;
-
-        // ✅ 1. LÉPÉS: Létezik már ez a TERMÉKCSALÁD (Variant SKU)?
-        // (Itt kijavítva 'id'-ről 'product_id'-re ÉS a kulcs 'sku_group'-ra)
-        $checkSql = "SELECT product_id FROM products WHERE sku_group = '" . $variantSku . "' LIMIT 1";
-        $result = $conn->query($checkSql);
-
-        if ($result && $result->num_rows > 0) {
-            // --- A TERMÉKCSALÁD (SKU) MÁR LÉTEZIK ---
+        $newPrice = (float)$data[$map['price']];
+        $newQuantity = (int)$data[$map['qty']];
+        $isChanged = (strtolower(trim($data[$map['is_changed']])) === 'true');
+        
+        // A (Ismert eset): Létezik a lokális DB-ben (GENERÁLT SKU alapján)?
+        $stmt_check_db->bind_param("s", $generated_sku);
+        $stmt_check_db->execute();
+        $result = $stmt_check_db->get_result();
+        
+        if ($result->num_rows > 0) {
+            // IGEN. Ez a normál "UPDATE" vagy "REAKTIvÁLÁS" eset.
             $row = $result->fetch_assoc();
-            $product_id_to_use = $row['product_id'];
+            
+            $needs_update_flag = $row['needs_update'];
+            if ($needs_update_flag == 20) $needs_update_flag = 1; // Reaktiválás
+            else if ($isChanged && !in_array($needs_update_flag, [2, 10])) $needs_update_flag = 1; // Frissítés
+            else if (!$isChanged && $needs_update_flag == 1) $needs_update_flag = 0; // Vissza 0-ra
+            
+            // Készletek frissítése (a másik raktár adatának megtartásával)
+            $qty1 = ($feed['location_index'] == 1) ? $newQuantity : $row['qty_location_1'];
+            $qty2 = ($feed['location_index'] == 2) ? $newQuantity : $row['qty_location_2'];
 
+            $stmt_update_db->bind_param("diissssssissssssssss",
+                $newPrice, $qty1, $qty2, $needs_update_flag, $run_timestamp,
+                $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
+                $variantSkuGroup, $data[$map['barcode']], $data[$map['grams']],
+                $data[$map['img1']], $data[$map['img2']], $data[$map['img3']],
+                $data[$map['opt1_name']], $option1Val, $data[$map['opt2_name']], $option2Val,
+                $generated_sku
+            );
+            $stmt_update_db->execute();
+            $total_updated++;
+            
         } else {
-            // --- ÚJ TERMÉKCSALÁD (SKU) ---
-            // Hozzuk létre a fő terméket
+            // NEM. Ez a B1 (Új) vagy B2 (Örökbefogadás) eset.
             
-            // Vegyük ki a fő termék adatait (ezek minden variánsnál ugyanazok)
-            $title = isset($insertData['title']) ? $conn->real_escape_string($insertData['title']) : "";
-            $brand = isset($insertData['brand']) ? $conn->real_escape_string($insertData['brand']) : ""; // 'brand' a $customMap alapján
-            $productType = isset($insertData['product_type']) ? $conn->real_escape_string($insertData['product_type']) : "";
-            $tags = $conn->real_escape_string($tagsValue);
+            // B. Kérdés: Létezik a Shopify-ban (GENERÁLT SKU alapján)?
+            $shopifyGids = productQueryBySku_graphql($token, $shopurl, $generated_sku); 
             
-            // FONTOS: A 'sku_group' egy új oszlop, ide mentjük a fő SKU-t a csoportosításhoz.
-            // A 'Handle'-t is elmentjük, de nem használjuk kulcsként.
-            $sql = "INSERT INTO products (Handle, title, brand, product_type, tags, sku_group, user_id, status, newflag, created_at, updated_at) 
-                    VALUES ('$handle', '$title', '$brand', '$productType', '$tags', '$variantSku', 1, 'Import in Progress', 1, NOW(), NOW())";
-
-            if ($conn->query($sql) === TRUE) {
-                $product_id_to_use = $conn->insert_id; // Megvan az új termék ID-ja
-                echo "✅ Inserted NEW product (SKU Group): <b>$variantSku</b> (ProductID: $product_id_to_use)<br>";
-                $rowCount++;
-                
-                // Leírás hozzáadása (csak egyszer, az új termékhez)
-                if (!empty($descriptionValue)) {
-                    $desc_sql = "INSERT INTO product_description (product_id, description, user_id)
-                                 VALUES ($product_id_to_use, '" . $conn->real_escape_string($descriptionValue) . "', 1)";
-                    $conn->query($desc_sql);
-                }
+            $needs_update_flag = 0; $gid_product = null; $gid_variant = null; $gid_inventory = null;
+            
+            if ($shopifyGids === null) {
+                // B1 (Új eset): Nem, sehol nincs.
+                $needs_update_flag = 2; // 2 = Létrehozás
+                $total_created++;
             } else {
-                echo "❌ Error inserting NEW product ($variantSku): " . $conn->error . "<br>";
-                continue; // Hiba esetén ugorjunk a következő sorra
+                // B2 (Örökbefogadás eset): Igen, megvan a Shopify-ban.
+                $needs_update_flag = 10; // 10 = Teljes Felülírás
+                $gid_product = $shopifyGids['product_gid'];
+                $gid_variant = $shopifyGids['variant_gid'];
+                $gid_inventory = $shopifyGids['inventory_gid'];
+                $total_adopted++;
+            }
+            
+            $qty1 = ($feed['location_index'] == 1) ? $newQuantity : 0;
+            $qty2 = ($feed['location_index'] == 2) ? $newQuantity : 0;
+            
+            $stmt_insert_db->bind_param(
+                "sssssssssisssssssdiisssis", 
+                $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
+                $variantSkuGroup, $generated_sku, $data[$map['barcode']], $data[$map['grams']], $data[$map['tracker']],
+                $data[$map['img1']], $data[$map['img2']], $data[$map['img3']],
+                $data[$map['opt1_name']], $option1Val, $data[$map['opt2_name']], $option2Val,
+                $newPrice, $qty1, $qty2,
+                $gid_product, $gid_variant, $gid_inventory,
+                $needs_update_flag, $run_timestamp
+            );
+            
+            if(!$stmt_insert_db->execute()) {
+                 if(strpos($stmt_insert_db->error, "Duplicate entry") !== false) {
+                     echo "....ℹ️ Információ: A '$generated_sku' kulcs már feldolgozásra került (valószínűleg a másik feedből).<br>";
+                 } else {
+                     echo "....❌ Hiba az INSERT során (Generált SKU: $generated_sku): " . $stmt_insert_db->error . "<br>";
+                 }
             }
         }
+    } // while (sorok)
+    
+    fclose($temp);
+    echo "✅ Feed feldolgozva. <br>";
+} // foreach (feed)
 
-        // ✅ 2. LÉPÉS: A VARIÁNS HOZZÁADÁSA (MINDIG)
-        if ($product_id_to_use > 0) {
-            
-            // Keressük meg a variáns-adatokat
-            $option1nameIndex = array_search("option1 name", $normalizedHeaders);
-            $option2nameIndex = array_search("option2 name", $normalizedHeaders);
-            $option1valIndex = array_search("option1 value", $normalizedHeaders);
-            $option2valIndex = array_search("option2 value", $normalizedHeaders);
-            $variantPriceIndex = array_search("variant price", $normalizedHeaders);
-            // Készlet oszlop dinamikus keresése (mivel a két feedben más a neve)
-            $peppelaQtyIndex = array_search("peppela inventory qty", $normalizedHeaders);
-            $stockfirmatiQtyIndex = array_search("stockfirmati raktár inventory qty", $normalizedHeaders);
-            
-            $variantBarcodeIndex = array_search("variant barcode", $normalizedHeaders); // Ez lesz az egyedi azonosító
+$stmt_check_db->close();
+$stmt_insert_db->close();
+$stmt_update_db->close();
 
-            $option1name = $option1nameIndex !== false && isset($data[$option1nameIndex]) ? $conn->real_escape_string($data[$option1nameIndex]) : "";
-            $option2name = $option2nameIndex !== false && isset($data[$option2nameIndex]) ? $conn->real_escape_string($data[$option2nameIndex]) : "";
-            $option1val = $option1valIndex !== false && isset($data[$option1valIndex]) ? $conn->real_escape_string($data[$option1valIndex]) : "";
-            $option2val = $option2valIndex !== false && isset($data[$option2valIndex]) ? $conn->real_escape_string($data[$option2valIndex]) : "";
-            $variantPrice = $variantPriceIndex !== false && isset($data[$variantPriceIndex]) ? $conn->real_escape_string($data[$variantPriceIndex]) : 0;
-            $variantBarcode = $variantBarcodeIndex !== false && isset($data[$variantBarcodeIndex]) ? $conn->real_escape_string($data[$variantBarcodeIndex]) : $variantSku ."-".$option1val; // Ha nincs vonalkód, generálunk egy egyedit
-            
-            $variantQty = 0;
-            if ($peppelaQtyIndex !== false && isset($data[$peppelaQtyIndex])) {
-                $variantQty = (int)$data[$peppelaQtyIndex];
-            } elseif ($stockfirmatiQtyIndex !== false && isset($data[$stockfirmatiQtyIndex])) {
-                $variantQty = (int)$data[$stockfirmatiQtyIndex];
-            }
+echo "<hr><h3>Eredmények (Adatbázis):</h3>";
+echo "ℹ️ Feldolgozott sorok összesen: $total_rows_processed<br>";
+echo "🟩 Új termék (Létrehozásra váró): $total_created<br>";
+echo "🟨 Örökbefogadott/Javításra váró: $total_adopted<br>";
+echo "🟦 Meglévő (Frissített/Ellenőrzött): $total_updated<br>";
 
-            // Először ellenőrizzük, hogy ez a KONKRÉT VARIÁNS (Vonalkód VAGY opciók) létezik-e már
-            $checkVariantSql = "SELECT id FROM product_variants WHERE product_id = $product_id_to_use AND option1val = '$option1val' AND option2val = '$option2val' AND user_id = 1 LIMIT 1";
-            $variantResult = $conn->query($checkVariantSql);
-            
-            if ($variantResult && $variantResult->num_rows > 0) {
-                // Ez a variáns (pl. 'S' méret) már létezik ehhez a termékhez, átugorjuk
-                echo "....⏭️ Skipped variant (Option already exists): <b>$option1val / $option2val</b> for SKU Group: $variantSku<br>";
-                $skippedCount++;
-                continue;
-            }
-            
-            // --- ÚJ VARIÁNS HOZZÁADÁSA ---
+// --- 8. ARCHIVÁLÁSI LOGIKA ---
+echo "<hr><h3>Archiválás futtatása...</h3>";
+$archive_sql = "UPDATE shopifyproducts 
+                SET needs_update = 20 
+                WHERE last_seen_in_feed < ? 
+                AND needs_update NOT IN (20, 2, 10)";
+$stmt_archive = $conn->prepare($archive_sql);
+$stmt_archive->bind_param("s", $run_timestamp);
+$stmt_archive->execute();
+$archived_count = $stmt_archive->affected_rows;
+$stmt_archive->close();
 
-            // Frissítsük a fő termék opcióit (ha még nincsenek beállítva)
-            $conn->query("UPDATE products SET option1name = '$option1name', option2name = '$option2name' WHERE product_id = $product_id_to_use AND (option1name IS NULL OR option1name = '')");
-
-            // Illesszük be az új variánst (FIGYELEM: a 'sku' oszlopba a *Variant Barcode*-ot mentjük)
-            $variant_sql = "INSERT INTO product_variants (product_id, option1val, option2val, sku, price, quantity, user_id, updated_at)
-                            VALUES ($product_id_to_use, '$option1val', '$option2val', '$variantBarcode', '$variantPrice', '$variantQty', 1, NOW())";
-            
-            if ($conn->query($variant_sql) === TRUE) {
-                $variant_id = $conn->insert_id;
-                echo "....✅ Inserted NEW variant: <b>$option1val / $option2val</b> (Barcode: $variantBarcode) for SKU Group: $variantSku<br>";
-
-                // Képek hozzáadása a variánshoz
-                foreach ($imageColumns as $imgCol) {
-                    $imgIndex = array_search(strtolower($imgCol), $normalizedHeaders);
-                    if ($imgIndex !== false && isset($data[$imgIndex]) && !empty($data[$imgIndex])) {
-                        $imageURL = $conn->real_escape_string($data[$imgIndex]);
-                        $img_sql = "INSERT INTO product_images (variant_id, imgurl, user_id)
-                                    VALUES ($variant_id, '$imageURL', 1)";
-                        $conn->query($img_sql);
-                    }
-                }
-            } else {
-                 echo "....❌ Error inserting NEW variant ($option1val / $option2val): " . $conn->error . "<br>";
-            }
-        } // Vége az if ($product_id_to_use > 0) blokknak
-    } // Vége a while ciklusnak
-
-
-    fclose($handle);
-    unlink($tempCsv);
-
-    echo "<br>✅ Feed import completed. (indexnew.php)<br>";
-    echo "🟩 New products (SKU Groups) inserted: <b>$rowCount</b><br>";
-    echo "🟨 Skipped (Variants already existing): <b>$skippedCount</b><br>";
-
-} else {
-    echo "❌ Failed to open feed file.";
-}
+echo "✅ Archiválásra megjelölve: <b>$archived_count</b> termék (amelyek nem szerepeltek ebben a futásban).<br>";
+echo "<h2>✅ Befejezve: 1. Lépés - BEOLVASÁS és SZINKRONIZÁLÁS</h2>";
 
 $conn->close();
+
+/**
+ * Segédfüggvény a kulcsok tisztítására (pl. 'M/L' -> 'M-L')
+ */
+function sanitize_key($text) {
+    return preg_replace('/[^a-z0-9]+/', '-', strtolower($text));
+}
 ?>
