@@ -17,10 +17,8 @@ mysqli_set_charset($conn, "utf8");
 
 // Az összes felesleges oszlop, amit törölni fogunk
 $columns_to_drop = [
-    "gid_shopifyproductid",
-    "gid_shopifyvariantid",
-    "gid_shopifyinventoryid",
-    "gid_shopifyinventorytid" // Ezt is belevesszük, hátha mégis létezik
+    "gid_shopifylocationid"
+
 ];
 
 $all_successful = true;
