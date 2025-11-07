@@ -72,6 +72,7 @@ if (($handle = fopen($tempCsv, "r")) !== FALSE) {
         "option1 name"    => "option1name",
         "option2 name"    => "option2name",
         "body (html)"     => "description",
+        "tags"            => "tags",
     ];
 
     $mapping = [];
@@ -196,6 +197,7 @@ if (($handle = fopen($tempCsv, "r")) !== FALSE) {
 
 $conn->close();
 ?>
+
 
 
 
