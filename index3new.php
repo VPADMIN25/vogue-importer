@@ -1,276 +1,213 @@
 <?php
+// index3new.php (Végleges Verzió V3 - A "Végrehajtó")
+// FELADAT: Kezeli a Shopify-ban a módosításokat (Frissít, Javít, Archivál, Reaktivál)
+
 ini_set('max_execution_time', 0);
 set_time_limit(0);
 
-// ✅ Database Connection (Using DigitalOcean Environment Variables - VPC SSL Mode)
+echo "<h2>FUTÁS INDUL: 3. Lépés - MÓDOSÍTÁSOK VÉGREHAJTÁSA</h2>";
+
+// --- 1. ADATBÁZIS KAPCSOLAT ---
 $host = getenv('DB_HOST');
 $username = getenv('DB_USER');
 $password = getenv('DB_PASS');
 $dbname = getenv('DB_NAME');
 $port = (int)getenv('DB_PORT');
-$sslmode = getenv('DB_SSLMODE'); // 'REQUIRED'
-
+$sslmode = getenv('DB_SSLMODE');
 $conn = mysqli_init();
-
-// Ez a kulcs: Beállítjuk az SSL-t, de NEM ellenőrizzük a tanúsítványt
-if ($sslmode === 'require') {
-    mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
-}
-
-// Csatlakozás a mysqli_real_connect segítségével, SSL flag-et kényszerítve
+if ($sslmode === 'require') { mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false); }
 if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NULL, MYSQLI_CLIENT_SSL)) {
-    die("❌ Connection failed (VPC SSL Handshake Failed): " . mysqli_connect_error());
+    die("❌ Connection failed: " . mysqli_connect_error());
 }
-mysqli_set_charset($conn, "utf8");
-echo "✅ Database Connected Successfully (index3new.php)<br>";
+mysqli_set_charset($conn, "utf8mb4");
+echo "✅ Adatbázis-kapcsolat sikeres.<br>";
 
+// --- 2. HELPERS ÉS SHOPIFY KREDENCIÁLISOK ---
+// A szükséges API függvények miatt kötelező
+require_once("helpers/shopifyGraphQL.php");
+$shopurl = getenv('SHOPIFY_SHOP_URL');
+$token = getenv('SHOPIFY_API_TOKEN');
+if (empty($shopurl) || empty($token)) {
+    die("❌ Hiányzó Környezeti Változók: SHOPIFY_SHOP_URL vagy SHOPIFY_API_TOKEN.");
+}
+echo "✅ Shopify kredenciálisok betöltve ($shopurl).<br>";
 
-// ✅ Feed URL
-$feedUrl = "https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv";
-echo "📥 Fetching feed from: $feedUrl<br>";
+// --- 3. RAKTÁRHELYEK (LOCATIONS) MEGSZERZÉSE ---
+$location_name_1 = "Italy Vogue Premiere Warehouse 1";
+$location_name_2 = "Italy Vogue Premiere Warehouse 2";
+$location_gid_1 = getShopifyLocationGid($token, $shopurl, $location_name_1);
+$location_gid_2 = getShopifyLocationGid($token, $shopurl, $location_name_2);
+if (empty($location_gid_1) || empty($location_gid_2)) {
+    die("❌ Kritikus hiba: A '$location_name_1' vagy '$location_name_2' raktárhely nem található!");
+}
+echo "✅ Raktárhely GID-jei sikeresen lekérdezve.<br>";
 
-// ✅ Read feed content
-$feedContent = @file_get_contents($feedUrl);
-if ($feedContent === false) {
-    die("❌ Unable to fetch feed: $feedUrl");
+// --- 4. FELADATOK ÖSSZEGYŰJTÉSE (TÖMEGES VÉGREHAJTÁSHOZ) ---
+// Lekérdezünk minden "piszkos" sort (1=Frissítés, 10=Javítás/Felülírás, 20=Archiválás)
+$sql = "SELECT * FROM shopifyproducts 
+        WHERE needs_update IN (1, 10, 20) 
+        AND shopifyproductid IS NOT NULL 
+        LIMIT 200"; // Egyszerre csak 200-at
+        
+$result = $conn->query($sql);
+
+if (!$result) {
+    die("❌ Hiba a lekérdezés során: " . $conn->error);
+}
+if ($result->num_rows == 0) {
+    echo "✅ Nincs frissítésre, javításra vagy archiválásra váró termék.<br>";
+    $conn->close();
+    exit;
 }
 
-// ✅ Parse CSV from feed
-$rows = [];
-$temp = fopen("php://memory", 'r+');
-fwrite($temp, $feedContent);
-rewind($temp);
+echo "ℹ️ Feldolgozás alatt: <b>{$result->num_rows}</b> tétel...<br>";
 
-// JAVÍTVA: Hozzáadva a "\" escape karakter
-while (($data = fgetcsv($temp, 20000, ",", "\"")) !== FALSE) {
-    $rows[] = $data;
-}
-fclose($temp);
+// Várólisták a tömeges (bulk) API hívásokhoz
+$inventory_update_queue = [];
+$price_update_queue = []; // Kulcs: product_gid, Érték: variáns tömb
+$status_archive_queue = [];
+$status_reactivate_queue = [];
+$full_overwrite_queue = [];
 
-if (count($rows) <= 1) {
-    die("❌ No data found in feed.");
-}
+$processed_ids_success = []; 
 
-// ✅ Shopify credentials
-$shopurl = '';
-$token = '';
-$userresult = $conn->query("SELECT * FROM users WHERE installationstatus = 1 AND id = 1");
-if ($userresult->num_rows > 0) {
-    while ($userrow = $userresult->fetch_assoc()) {
-        $shopurl = $userrow['shopurl'];
-        $token = $userrow['token'];
+while ($row = $result->fetch_assoc()) {
+    
+    switch ($row['needs_update']) {
+        
+        // Eset 1: Készlet/Ár Frissítés (és REAKTIVÁLÁS)
+        case 1:
+            // 1a. Ár hozzáadása a várólistához
+            $product_gid = $row['shopifyproductid'];
+            if (!isset($price_update_queue[$product_gid])) $price_update_queue[$product_gid] = [];
+            $price_update_queue[$product_gid][] = [
+                "id" => $row['shopifyvariantid'],
+                "price" => $row['price_huf']
+            ];
+            
+            // 1b. Készlet hozzáadása a várólistához (mindkét raktár)
+            $inventory_gid = $row['shopifyinventoryid'];
+            $inventory_update_queue[] = ["inventoryItemId" => $inventory_gid, "locationId" => $location_gid_1, "availableQuantity" => (int)$row['qty_location_1']];
+            $inventory_update_queue[] = ["inventoryItemId" => $inventory_gid, "locationId" => $location_gid_2, "availableQuantity" => (int)$row['qty_location_2']];
+            
+            // 1c. Reaktiválási lista (Ha archivált volt, active-ra állítjuk)
+            $status_reactivate_queue[] = $product_gid;
+            $processed_ids_success[] = $row['id']; 
+            break;
+            
+        // Eset 10: Teljes Felülírás (Javítás / Örökbefogadás)
+        case 10:
+            $full_overwrite_queue[] = $row; // Ezt egyenként kell futtatni
+            break;
+            
+        // Eset 20: Archiválás
+        case 20:
+            $status_archive_queue[] = $row['shopifyproductid'];
+            break;
     }
 }
 
-// ✅ Counters
-$insertedProducts = 0;
-$insertedVariants = 0;
-$insertedDescriptions = 0;
-$insertedImages = 0;
-$updatedProducts = 0;
-$skipped = 0;
+// --- 5. TÖMEGES VÉGREHAJTÁSOK ---
 
-// ✅ Process rows (skip header)
-for ($row = 1; $row < count($rows); $row++) {
-    $data = $rows[$row];
-
-    $handleVal      = $conn->real_escape_string(trim($data[0]));
-    $title          = $conn->real_escape_string(trim($data[1]));
-    $description    = $conn->real_escape_string(trim($data[2]));
-    $brand          = $conn->real_escape_string(trim($data[3]));
-    $productType    = $conn->real_escape_string(trim($data[4]));
-    $option1Name    = $conn->real_escape_string(trim($data[7]));
-    $option1Value   = $conn->real_escape_string(trim($data[8]));
-    $option2Name    = $conn->real_escape_string(trim($data[9]));
-    $option2Value   = $conn->real_escape_string(trim($data[10]));
-    $variantSku     = $conn->real_escape_string(trim($data[11]));
-    $inventoryQty   = intval($data[14]);
-    $variantPrice   = floatval($data[16]);
-    $isChanged      = trim($data[26]);
-
-    $imageurl1      = $conn->real_escape_string(trim($data[20]));
-    $imageurl2      = isset($data[21]) ? $conn->real_escape_string(trim($data[21])) : '';
-    $imageurl3      = isset($data[22]) ? $conn->real_escape_string(trim($data[22])) : '';
-
-    $user_id = 1;
-
-    if (empty($handleVal)) {
-        echo "⚠️ Skipping row $row: Missing handle<br>";
-        continue;
-    }
-
-    echo "Row $row → Handle: $handleVal | Is Changed: <b>$isChanged</b><br>";
-
-    // ✅ Skip if not changed
-    if (strtolower(trim($isChanged)) !== "true") {
-        echo "⏭️ Skipped '$handleVal' (Is Changed = FALSE — no update)<br>";
-        $skipped++;
-        continue;
-    }
-
-    // ✅ Check if product exists
-    // EZ A RÉSZ MÉG JAVÍTÁSRA SZORUL (A 2 FEED LOGIKA)
-    $checkProduct = $conn->query("SELECT product_id FROM products WHERE title = '$title'");
-    if ($checkProduct && $checkProduct->num_rows > 0) {
-        // ✅ Update existing
-        $productRow = $checkProduct->fetch_assoc();
-        $product_id = $productRow['product_id'];
-
-        $variantCheck = $conn->query("SELECT * FROM product_variants WHERE product_id = $product_id AND option1val='$option1Value' AND option2val='$option2Value'");
-        if ($variantCheck && $variantCheck->num_rows > 0) {
-            $variantRow = $variantCheck->fetch_assoc();
-            $dbQty = (int)$variantRow['quantity'];
-            $dbPrice = (float)$variantRow['price'];
-            $shopifyproductid = $variantRow['shopifyproductid'];
-            $shopifyvariantid = $variantRow['shopifyvariantid'];
-            $shopifyinventoryid = $variantRow['shopifyinventoryid'];
-            $shopifylocationid = $variantRow['shopifylocationid'];
-        } else {
-            $dbQty = 0;
-            $dbPrice = 0;
-            $shopifyproductid = '';
-            $shopifyvariantid = '';
-            $shopifyinventoryid = '';
-            $shopifylocationid = '';
+// 5A. ÁRAK FRISSÍTÉSE (TÖMEGES)
+if (!empty($price_update_queue)) {
+    echo "<hr><h4>5A. Árak frissítése...</h4>";
+    foreach($price_update_queue as $product_gid => $variants) {
+        $response = productVariantsBulkUpdate_graphql($token, $shopurl, $product_gid, $variants);
+        if (isset($response['data']['productVariantsBulkUpdate']['userErrors']) && !empty($response['data']['productVariantsBulkUpdate']['userErrors'])) {
+             echo "....❌ Hiba: " . json_encode($response['data']['productVariantsBulkUpdate']['userErrors']) . "<br>";
         }
-
-        echo "🔄 Updating '$handleVal' (Is Changed = TRUE)...<br>";
-
-        // ✅ Update Shopify
-        if ($dbQty != $inventoryQty) {
-            updateShopifyInventory($token, $shopurl, $shopifyinventoryid, $shopifylocationid, $inventoryQty);
-        }
-        if (abs($dbPrice - $variantPrice) > 0.001) {
-            updateShopifyPrice1($shopurl, $token, $shopifyvariantid, $variantPrice, $shopifyproductid);
-        }
-
-        // ✅ Update local DB
-        $updateSql = "
-            UPDATE product_variants
-            SET quantity = $inventoryQty, price = $variantPrice, updated_at = NOW()
-            WHERE product_id = $product_id
-        ";
-        if ($conn->query($updateSql)) {
-            echo "✅ Updated '$handleVal' → Qty: $inventoryQty | Price: $variantPrice<br>";
-            $updatedProducts++;
-        } else {
-            echo "❌ DB Update failed for '$handleVal': " . $conn->error . "<br>";
-        }
-
-    } else {
-        // ✅ Insert new
-        // EZT A RÉSZT MÁR AZ INDEXNEW.PHP KEZELI
-        // echo "🆕 Inserting new product '$handleVal' (Is Changed = TRUE)...<br>";
-
-        // $insertProduct = "
-        //     INSERT INTO products (
-        //         title, description, Handle, brand, product_type, option1name, option2name, status, user_id
-        //     ) VALUES (
-        //         '$title', '$description', '$handleVal', '$brand', '$productType', '$option1Name', '$option2Name', 'Import in Progress', $user_id
-        //     )
-        // ";
-        // if ($conn->query($insertProduct)) {
-        //     $product_id = $conn->insert_id;
-        //     $insertedProducts++;
-
-        //     $insertVariant = "
-        //         INSERT INTO product_variants (product_id, option1val, option2val, price, quantity, user_id, updated_at)
-        //         VALUES ($product_id, '$option1Value', '$option2Value', '$variantPrice', '$inventoryQty', 1, NOW())
-        //     ";
-        //     if ($conn->query($insertVariant)) {
-        //         $variant_id = $conn->insert_id;
-        //         $insertedVariants++;
-
-        //         $conn->query("INSERT INTO product_description (product_id, description, user_id) VALUES ($product_id, '$description', 1)");
-        //         $insertedDescriptions++;
-
-        //         $imageUrls = array_filter([$imageurl1, $imageurl2, $imageurl3]);
-        //         foreach ($imageUrls as $imgUrl) {
-        //             $conn->query("INSERT INTO product_images (variant_id, imgurl, user_id) VALUES ($variant_id, '$imgUrl', 1)");
-        //             $insertedImages++;
-        //         }
-
-        //         echo "✅ Inserted '$handleVal' → Qty: $inventoryQty | Price: $variantPrice<br>";
-        //     }
-        // }
     }
 }
 
-// ✅ Summary
-echo "<br>🎯 Feed Import Completed (index3new.php)<br>";
-echo "✅ Products Inserted: $insertedProducts<br>";
-echo "✅ Variants Inserted: $insertedVariants<br>";
-echo "✅ Descriptions Inserted: $insertedDescriptions<br>";
-echo "✅ Images Inserted: $insertedImages<br>";
-echo "🔄 Products Updated (Is Changed = TRUE): $updatedProducts<br>";
-echo "⏩ Skipped (Is Changed = FALSE): $skipped<br>";
+// 5B. KÉSZLETEK FRISSÍTÉSE (TÖMEGES)
+if (!empty($inventory_update_queue)) {
+    echo "<hr><h4>5B. Készletek frissítése...</h4>";
+    foreach(array_chunk($inventory_update_queue, 100) as $chunk) {
+        $response = inventorySetQuantities_graphql($token, $shopurl, $chunk);
+        if (isset($response['data']['inventorySetQuantities']['userErrors']) && !empty($response['data']['inventorySetQuantities']['userErrors'])) {
+             echo "....❌ Hiba: " . json_encode($response['data']['inventorySetQuantities']['userErrors']) . "<br>";
+        }
+    }
+}
 
+// 5C. STÁTUSZ: REAKTIVÁLÁS (TÖMEGES)
+if (!empty($status_reactivate_queue)) {
+    echo "<hr><h4>5C. Termékek reaktiválása...</h4>";
+    foreach(array_unique($status_reactivate_queue) as $product_gid) {
+        productUpdateStatus_graphql($token, $shopurl, $product_gid, 'ACTIVE');
+    }
+}
+
+// 5D. STÁTUSZ: ARCHIVÁLÁS (TÖMEGES)
+if (!empty($status_archive_queue)) {
+    echo "<hr><h4>5D. Termékek archiválása...</h4>";
+    foreach(array_unique($status_archive_queue) as $product_gid) {
+        $response = productUpdateStatus_graphql($token, $shopurl, $product_gid, 'ARCHIVED');
+        
+        if (!isset($response['data']['productUpdate']['product']['id'])) {
+            // Hiba: ha nem sikerül, a termék valószínűleg már törölt. Állítsuk vissza 0-ra a hibás GID-t, hogy ne próbálja újra.
+            $conn->query("UPDATE shopifyproducts SET needs_update = 0 WHERE shopifyproductid = '" . $conn->real_escape_string($product_gid) . "'");
+        }
+    }
+}
+
+// 5E. TELJES FELÜLÍRÁS (EGYENKÉNT)
+if (!empty($full_overwrite_queue)) {
+    echo "<hr><h4>5E. Teljes felülírás (Javítás/Örökbefogadás)...</h4>";
+    foreach($full_overwrite_queue as $row) {
+        $product_gid = $row['shopifyproductid'];
+        
+        // 1. Termék-szintű adatok felülírása (cím, leírás, tagek, képek)
+        $product_data = [
+            "id" => $product_gid,
+            "title" => $row['title'],
+            "bodyHtml" => $row['body'],
+            "vendor" => $row['vendor'],
+            "productType" => $row['type'],
+            "tags" => $row['tags'],
+            "status" => "ACTIVE" 
+        ];
+        
+        $images_data = [];
+        if (!empty($row['img_src'])) $images_data[] = ["src" => $row['img_src']];
+        if (!empty($row['img_src_2'])) $images_data[] = ["src" => $row['img_src_2']];
+        if (!empty($row['img_src_3'])) $images_data[] = ["src" => $row['img_src_3']];
+        if (!empty($images_data)) {
+            $product_data["images"] = $images_data;
+        }
+
+        $response = productFullUpdate_graphql($token, $shopurl, $product_gid, $product_data);
+        
+        if (isset($response['data']['productUpdate']['userErrors']) && !empty($response['data']['productUpdate']['userErrors'])) {
+             echo "....❌ Hiba (Termék szint): " . json_encode($response['data']['productUpdate']['userErrors']) . "<br>";
+             continue; 
+        }
+
+        // 2. Variáns-szintű adatok (Ár, Készlet) frissítése
+        $variant_data = [
+            "id" => $row['shopifyvariantid'],
+            "price" => $row['price_huf']
+        ];
+        productVariantsBulkUpdate_graphql($token, $shopurl, $product_gid, [$variant_data]);
+        
+        $inventory_data = [
+            ["inventoryItemId" => $row['shopifyinventoryid'], "locationId" => $location_gid_1, "availableQuantity" => (int)$row['qty_location_1']],
+            ["inventoryItemId" => $row['shopifyinventoryid'], "locationId" => $location_gid_2, "availableQuantity" => (int)$row['qty_location_2']]
+        ];
+        inventorySetQuantities_graphql($token, $shopurl, $inventory_data);
+
+        $processed_ids_success[] = $row['id'];
+    }
+}
+
+// --- 6. "ZÁSZLÓK" TISZTÍTÁSA A DB-BEN ---
+if (!empty($processed_ids_success)) {
+    $ids_string = implode(',', $processed_ids_success);
+    $conn->query("UPDATE shopifyproducts SET needs_update = 0 WHERE id IN ($ids_string)");
+    echo "<hr>✅ Sikeresen frissítve (needs_update=0): " . count($processed_ids_success) . " tétel.<br>";
+}
+
+echo "<h2>✅ Befejezve: 3. Lépés - MÓDOSÍTÁSOK VÉGREHAJTÁSA</h2>";
 $conn->close();
-
-
-// ✅ Shopify helper functions
-function updateShopifyInventory($token, $shopurl, $inventory_item_id, $location_id, $quantity) {
-    if (empty($inventory_item_id) || empty($location_id)) return;
-    $shopifyinverid = 'gid://shopify/InventoryItem/'.$inventory_item_id;
-    $shopifylocatid = 'gid://shopify/Location/'.$location_id;
-    $quantity = (int)$quantity;
-
-    $query = <<<'GRAPHQL'
-mutation InventorySet($input: InventorySetQuantitiesInput!) {
-    inventorySetQuantities(input: $input) {
-        userErrors { field message }
-    }
-}
-GRAPHQL;
-
-    $variables = [
-        "input" => [
-            "ignoreCompareQuantity" => true,
-            "name" => "available",
-            "reason" => "correction",
-            "quantities" => [[
-                "inventoryItemId" => $shopifyinverid,
-                "locationId" => $shopifylocatid,
-                "quantity" => $quantity
-            ]]
-        ]
-    ];
-
-    $payload = json_encode(['query' => $query, 'variables' => $variables]);
-    $ch = curl_init("https://$shopurl/admin/api/2024-10/graphql.json");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => ["Content-Type: application/json", "X-Shopify-Access-Token: $token"],
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload
-    ]);
-    curl_exec($ch);
-    curl_close($ch);
-}
-
-function updateShopifyPrice1($shopurl, $token, $shopifyvariantid, $price, $shopifyproductid) {
-    if (empty($shopifyvariantid) || empty($shopifyproductid)) return;
-
-    $query = <<<'GRAPHQL'
-mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        userErrors { field message }
-    }
-}
-GRAPHQL;
-
-    $productId = "gid://shopify/Product/".$shopifyproductid;
-    $variants = [["id" => "gid://shopify/ProductVariant/".$shopifyvariantid, "price" => $price]];
-    $payload = json_encode(["query" => $query, "variables" => ["productId" => $productId, "variants" => $variants]]);
-
-    $ch = curl_init("https://$shopurl/admin/api/2024-10/graphql.json");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => ["Content-Type: application/json", "X-Shopify-Access-Token: $token"],
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload
-    ]);
-    curl_exec($ch);
-    curl_close($ch);
-}
 ?>
