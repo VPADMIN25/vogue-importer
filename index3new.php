@@ -2,7 +2,7 @@
 ini_set('max_execution_time', 0);
 set_time_limit(0);
 
-// ✅ Database Connection (Using DigitalOcean Environment Variables - VPC Default Mode)
+// ✅ Database Connection (Using DigitalOcean Environment Variables - VPC SSL Mode)
 $host = getenv('DB_HOST');
 $username = getenv('DB_USER');
 $password = getenv('DB_PASS');
@@ -10,22 +10,20 @@ $dbname = getenv('DB_NAME');
 $port = (int)getenv('DB_PORT');
 $sslmode = getenv('DB_SSLMODE'); // 'REQUIRED'
 
-// Létrehozzuk az objektumot
 $conn = mysqli_init();
 
-// NEM állítunk be semmilyen kézi SSL opciót
-// A rendszerre bízzuk a belső hálózati kapcsolat kezelését
-
-// Csatlakozás a mysqli_real_connect segítségével, SSL flag NÉLKÜL
-// Az sslmode='require' miatt a hostnév fogja kikényszeríteni az SSL-t, ha kell.
-if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port)) {
-    // Ha a kapcsolat sikertelen, írjuk ki a hibát és álljunk le
-    die("❌ Connection failed (VPC Default Mode Failed): " . mysqli_connect_error());
+// Ez a kulcs: Beállítjuk az SSL-t, de NEM ellenőrizzük a tanúsítványt
+if ($sslmode === 'require') {
+    mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
 }
 
-// Ha a kapcsolat sikeres, állítsuk be a karakterkódolást
+// Csatlakozás a mysqli_real_connect segítségével, SSL flag-et kényszerítve
+if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NULL, MYSQLI_CLIENT_SSL)) {
+    die("❌ Connection failed (VPC SSL Handshake Failed): " . mysqli_connect_error());
+}
 mysqli_set_charset($conn, "utf8");
-echo "✅ Database Connected Successfully<br>";
+echo "✅ Database Connected Successfully (index3new.php)<br>";
+
 
 // ✅ Feed URL
 $feedUrl = "https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv";
@@ -43,6 +41,7 @@ $temp = fopen("php://memory", 'r+');
 fwrite($temp, $feedContent);
 rewind($temp);
 
+// JAVÍTVA: Hozzáadva a "\" escape karakter
 while (($data = fgetcsv($temp, 20000, ",", "\"")) !== FALSE) {
     $rows[] = $data;
 }
@@ -110,6 +109,7 @@ for ($row = 1; $row < count($rows); $row++) {
     }
 
     // ✅ Check if product exists
+    // EZ A RÉSZ MÉG JAVÍTÁSRA SZORUL (A 2 FEED LOGIKA)
     $checkProduct = $conn->query("SELECT product_id FROM products WHERE title = '$title'");
     if ($checkProduct && $checkProduct->num_rows > 0) {
         // ✅ Update existing
@@ -159,44 +159,45 @@ for ($row = 1; $row < count($rows); $row++) {
 
     } else {
         // ✅ Insert new
-        echo "🆕 Inserting new product '$handleVal' (Is Changed = TRUE)...<br>";
+        // EZT A RÉSZT MÁR AZ INDEXNEW.PHP KEZELI
+        // echo "🆕 Inserting new product '$handleVal' (Is Changed = TRUE)...<br>";
 
-        $insertProduct = "
-            INSERT INTO products (
-                title, description, Handle, brand, product_type, option1name, option2name, status, user_id
-            ) VALUES (
-                '$title', '$description', '$handleVal', '$brand', '$productType', '$option1Name', '$option2Name', 'Import in Progress', $user_id
-            )
-        ";
-        if ($conn->query($insertProduct)) {
-            $product_id = $conn->insert_id;
-            $insertedProducts++;
+        // $insertProduct = "
+        //     INSERT INTO products (
+        //         title, description, Handle, brand, product_type, option1name, option2name, status, user_id
+        //     ) VALUES (
+        //         '$title', '$description', '$handleVal', '$brand', '$productType', '$option1Name', '$option2Name', 'Import in Progress', $user_id
+        //     )
+        // ";
+        // if ($conn->query($insertProduct)) {
+        //     $product_id = $conn->insert_id;
+        //     $insertedProducts++;
 
-            $insertVariant = "
-                INSERT INTO product_variants (product_id, option1val, option2val, price, quantity, user_id, updated_at)
-                VALUES ($product_id, '$option1Value', '$option2Value', '$variantPrice', '$inventoryQty', 1, NOW())
-            ";
-            if ($conn->query($insertVariant)) {
-                $variant_id = $conn->insert_id;
-                $insertedVariants++;
+        //     $insertVariant = "
+        //         INSERT INTO product_variants (product_id, option1val, option2val, price, quantity, user_id, updated_at)
+        //         VALUES ($product_id, '$option1Value', '$option2Value', '$variantPrice', '$inventoryQty', 1, NOW())
+        //     ";
+        //     if ($conn->query($insertVariant)) {
+        //         $variant_id = $conn->insert_id;
+        //         $insertedVariants++;
 
-                $conn->query("INSERT INTO product_description (product_id, description, user_id) VALUES ($product_id, '$description', 1)");
-                $insertedDescriptions++;
+        //         $conn->query("INSERT INTO product_description (product_id, description, user_id) VALUES ($product_id, '$description', 1)");
+        //         $insertedDescriptions++;
 
-                $imageUrls = array_filter([$imageurl1, $imageurl2, $imageurl3]);
-                foreach ($imageUrls as $imgUrl) {
-                    $conn->query("INSERT INTO product_images (variant_id, imgurl, user_id) VALUES ($variant_id, '$imgUrl', 1)");
-                    $insertedImages++;
-                }
+        //         $imageUrls = array_filter([$imageurl1, $imageurl2, $imageurl3]);
+        //         foreach ($imageUrls as $imgUrl) {
+        //             $conn->query("INSERT INTO product_images (variant_id, imgurl, user_id) VALUES ($variant_id, '$imgUrl', 1)");
+        //             $insertedImages++;
+        //         }
 
-                echo "✅ Inserted '$handleVal' → Qty: $inventoryQty | Price: $variantPrice<br>";
-            }
-        }
+        //         echo "✅ Inserted '$handleVal' → Qty: $inventoryQty | Price: $variantPrice<br>";
+        //     }
+        // }
     }
 }
 
 // ✅ Summary
-echo "<br>🎯 Feed Import Completed<br>";
+echo "<br>🎯 Feed Import Completed (index3new.php)<br>";
 echo "✅ Products Inserted: $insertedProducts<br>";
 echo "✅ Variants Inserted: $insertedVariants<br>";
 echo "✅ Descriptions Inserted: $insertedDescriptions<br>";
@@ -273,8 +274,3 @@ GRAPHQL;
     curl_close($ch);
 }
 ?>
-
-
-
-
-
