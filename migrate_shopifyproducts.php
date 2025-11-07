@@ -12,7 +12,7 @@ if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NUL
     die("❌ Connection failed: " . mysqli_connect_error());
 }
 echo "✅ Adatbázis-kapcsolat sikeres.<br>";
-$sql = "ALTER TABLE `shopifyproducts` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY;";
+$sql = "ALTER TABLE `shopifyproducts` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;";
 echo "Parancs futtatása: $sql <br>";
 if ($conn->query($sql) === TRUE) {
     echo "✅ SIKER: A `shopifyproducts` tábla `id` oszlopa sikeresen beállítva AUTO_INCREMENT-re.<br>";
