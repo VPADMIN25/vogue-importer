@@ -17,7 +17,7 @@ mysqli_set_charset($conn, "utf8");
 
 // Az összes felesleges oszlop, amit törölni fogunk
 $columns_to_drop = [
-    "gid_shopifylocationid"
+    "sku"
 
 ];
 
