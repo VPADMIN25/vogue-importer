@@ -21,7 +21,7 @@ mysqli_set_charset($conn, "utf8");
 // Ha a valódi oszlopnév 'gid_shopifyinventoryid' (d-vel a végén), kérlek, javítsd ki a parancsban!
 // Én most a te hibaüzeneted alapján ('tid') járok el:
 
-$sql = "ALTER TABLE `shopifyproducts` DROP COLUMN `gid_shopifyinventorytid`;";
+$sql = "ALTER TABLE `shopifyproducts` DROP COLUMN `gid_shopifyinventoryid`;";
 
 // *** BIZTONSÁGI TARTALÉK (Ha elgépelted és 'id'-re végződik): ***
 // Ha a fenti parancs hibát dob, próbáld meg ezt a fájlt futtatni ezzel a paranccsal:
