@@ -1993,7 +1993,7 @@ print_r(   $imageArr);
                 $shopifyinventoryid = str_replace("gid://shopify/InventoryItem/", "", $shopifyinventoryidG);
                 $conn->query("update products set shopifyproductid = '".mysqli_real_escape_string($conn, $shopifyproductid)."', status = 'Imported', newflag = 0, updated_at = now() where user_id = '".$user_id."' and product_id = ".$product_id);
                 $conn->query("update product_variants set shopifyproductid = '".mysqli_real_escape_string($conn, $shopifyproductid)."', shopifyvariantid = '".mysqli_real_escape_string($conn, $shopifyvariantid)."', shopifyinventoryid = '".mysqli_real_escape_string($conn, $shopifyinventoryid)."', shopifylocationid = '".mysqli_real_escape_string($conn, $location_id)."', status = 'Imported', newflag = 0, updated_at = now() where user_id = '".$user_id."' and id = ".$variant_id);
-                $conn->query("insert into shopifyproducts(user_id, productid, variantid, sku, dateofmodification) values ('".$user_id."', '".mysqli_real_escape_string($conn, $shopifyproductid)."', '".mysqli_real_escape_string($conn, $shopifyvariantid)."', '".mysqli_real_escape_string($conn, $sku)."', now())");
+                $conn->query("insert into shopifyproducts(user_id, productid, variantid, dateofmodification) values ('".$user_id."', '".mysqli_real_escape_string($conn, $shopifyproductid)."', '".mysqli_real_escape_string($conn, $shopifyvariantid)."', now())");
                 addlog("productid ".$shopifyproductid, "INFO");
                  $weight_unitnew = $data['product']['variants'][0]['weight_unit'];
                 if(isset( $weight_unitnew) && $weight > 0){
@@ -3892,6 +3892,7 @@ print_r(   $imageArr);
 	addlog("Execution Finished", "INFO");
 	fclose($logfile);
 ?>
+
 
 
 
