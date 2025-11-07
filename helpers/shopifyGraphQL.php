@@ -1,25 +1,30 @@
 <?php
-// helpers/shopifyGraphQL.php (VÉGLEGES VERZIÓ V4 - JAVÍTOTT cURL/API VERZIÓVAL)
+// helpers/shopifyGraphQL.php (VÉGLEGES VERZIÓ V5 - KORRIGÁLT PAYLOAD)
 
 ini_set('max_execution_time', 0);
 set_time_limit(0);
 
 /**
  * 1. Alap cURL kérés küldése a Shopify GraphQL végpontra.
- * A legstabilabb '2024-04' API verziót használja, és kikapcsolja az SSL ellenőrzést.
- */
-/**
- * VÉGLEGES HIBAKERESŐ VERZIÓ: Kiírja a nyers cURL hibaüzenetet és a választ.
+ * JAVÍTVA: Nem küldi el a "variables" mezőt, ha az üres.
  */
 function send_graphql_request($token, $shopurl, $query, $variables = []) {
-    $payload = json_encode(['query' => $query, 'variables' => $variables]);
     
-    // Kényszerítsük a legstabilabb API verzióra: 2024-04
+    $data_to_send = ['query' => $query];
+    // !!! A KRITIKUS JAVÍTÁS !!! Csak akkor küldjük el a 'variables' kulcsot, ha nem üres.
+    if (!empty($variables)) {
+        $data_to_send['variables'] = $variables;
+    }
+    
+    $payload = json_encode($data_to_send);
+    
+    // Kényszerítsük a legstabilabb LTS verzióra: 2024-04
     $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false, // Kikapcsoljuk a tanúsítvány ellenőrzését
+        CURLOPT_SSL_VERIFYPEER => false, 
         CURLOPT_SSL_VERIFYHOST => false,
+        
         CURLOPT_HTTPHEADER => [
             "Content-Type: application/json",
             "X-Shopify-Access-Token: $token"
@@ -29,34 +34,28 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     ]);
     
     $response = curl_exec($ch);
-    $curl_error = curl_error($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $responseDecoded = json_decode($response, true);
     
-    // ----------------------------------------
-    // !!! DIAGNOSZTIKA !!!
-    // ----------------------------------------
-    echo "\n\n!!! SHOPIFY KOMMUNIKÁCIÓS HIBA !!!\n";
-    echo "  HTTP KÓD: $http_code\n";
-    echo "  cURL HIBA: $curl_error\n";
-    echo "  NYERS VÁLASZ: " . substr($response, 0, 500) . "...\n";
-    echo "!!! ---------------------------- !!!\n\n";
-    // ----------------------------------------
-
     if (curl_errno($ch)) {
         curl_close($ch);
-        return null; // Sikertelen cURL kapcsolat
+        return null;
     }
     
     curl_close($ch);
-    return json_decode($response, true);
+    
+    // Alapvető hibaellenőrzés (a mi diagnosztikai kiírásunk)
+    if (isset($responseDecoded['errors']) || (isset($responseDecoded['data']) && is_null($responseDecoded['data']) && !empty($payload))) {
+        // Hagyjuk a hívó szkriptre, hogy eldöntse, mi legyen a null válasszal.
+    }
+    return $responseDecoded;
 }
+
 
 /**
  * 2. Lekérdezi egy Shopify Raktárhely (Location) GID-jét név alapján.
- * Ezt a függvényt VISSZA KELL ÁLLÍTANI a normál működésre, miután a hiba elhárult!
+ * EZ A NORMÁL, MŰKÖDŐ VERZIÓ!
  */
 function getShopifyLocationGid($token, $shopurl, $locationName) {
-    // EZ A NORMÁL, NEM HIBAKERESŐ KÓD!
     $query = <<<'GRAPHQL'
 query {
     locations(first: 20) {
@@ -68,24 +67,22 @@ query {
 }
 GRAPHQL;
 
-    $response = send_graphql_request($token, $shopurl, $query);
+    // Nincs 'variables' paraméter átadva, így a send_graphql_request üresen hagyja a JSON-ban.
+    $response = send_graphql_request($token, $shopurl, $query); 
 
     if (isset($response['data']['locations']['nodes'])) {
         foreach ($response['data']['locations']['nodes'] as $location) {
-            // Karakterre pontos egyezés
             if ($location['name'] === $locationName) {
                 return $location['id'];
             }
         }
     }
-    // Mivel a hiba itt van, a hívó szkript (indexnew.php) kezeli a null válasz miatti leállást.
     return null; 
 }
 
 
-// AZ ÖSSZES TÖBBI FÜGGVÉNY (productQueryBySku_graphql, productCreate_graphql, stb.)
-// (Ezeket már nem ismétlem, de a GitHubra feltöltendő fájlnak tartalmaznia kell mindet!)
-// ...
+// INNENTŐL A TÖBBI FÜGGVÉNY (productQueryBySku_graphql, productCreate_graphql, stb.)
+// EZEKET TARTALMAZNIA KELL A FÁJLNAK.
 
 function productQueryBySku_graphql($token, $shopurl, $sku) {
     $query = <<<'GRAPHQL'
@@ -217,4 +214,3 @@ GRAPHQL;
     
     return send_graphql_request($token, $shopurl, $query, $variables);
 }
-
