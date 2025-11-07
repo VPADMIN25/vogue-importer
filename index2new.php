@@ -1,24 +1,24 @@
 <?php
-// ✅ Database Connection (Using DigitalOcean Environment Variables)
+// ✅ Database Connection (Using DigitalOcean Environment Variables - VPC SSL Mode)
 $host = getenv('DB_HOST');
 $username = getenv('DB_USER');
 $password = getenv('DB_PASS');
 $dbname = getenv('DB_NAME');
-$port = getenv('DB_PORT'); // A DigitalOcean-nél a port elengedhetetlen!
+$port = (int)getenv('DB_PORT');
 $sslmode = getenv('DB_SSLMODE'); // 'REQUIRED'
 
-// A DigitalOcean Managed MySQL-hez SSL kapcsolat szükséges
 $conn = mysqli_init();
+
+// Ez a kulcs: Beállítjuk az SSL-t, de NEM ellenőrizzük a tanúsítványt
+// Ez szükséges a DigitalOcean belső VPC-hálózatán
 if ($sslmode === 'require') {
-    // A belső (VPC) kapcsolathoz nincs szükség a ca-cert.crt fájlra,
-    // de az SSL flag-re igen.
-    mysqli_ssl_set($conn, NULL, NULL, NULL, NULL, NULL);
+    mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
 }
 
-// Csatlakozás a mysqli_real_connect segítségével, ami kezeli a portot és az SSL-t
-if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, (int)$port, NULL, $sslmode === 'require' ? MYSQLI_CLIENT_SSL : 0)) {
+// Csatlakozás a mysqli_real_connect segítségével, SSL flag-et kényszerítve
+if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NULL, MYSQLI_CLIENT_SSL)) {
     // Ha a kapcsolat sikertelen, írjuk ki a hibát és álljunk le
-    die("❌ Connection failed: " . mysqli_connect_error());
+    die("❌ Connection failed (VPC SSL Handshake Failed): " . mysqli_connect_error());
 }
 
 // Ha a kapcsolat sikeres, állítsuk be a karakterkódolást
@@ -3893,5 +3893,6 @@ print_r(   $imageArr);
 	addlog("Execution Finished", "INFO");
 	fclose($logfile);
 ?>
+
 
 
