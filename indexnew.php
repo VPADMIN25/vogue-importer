@@ -1,9 +1,6 @@
 <?php
-// indexnew.php (VÉGLEGES VERZIÓ V7 - Minden hiba javítva)
+// indexnew.php (V8 - DigitalOcean App Platform Kompatibilis)
 
-/**
- * Segédfüggvény a kulcsok tisztítására (pl. 'M/L' -> 'M-L')
- */
 function sanitize_key($text) {
     return preg_replace('/[^a-z0-9]+/', '-', strtolower(trim($text)));
 }
@@ -11,21 +8,33 @@ function sanitize_key($text) {
 ini_set('max_execution_time', 0);
 set_time_limit(0);
 ini_set('memory_limit', '1024M');
+echo "<pre style='font-family:Consolas;font-size:14px'>";
+echo "<h2>FUTÁS INDUL: 1. LÉPÉS – BEOLVASÁS és SZINKRONIZÁLÁS (Generált SKU alapú)</h2>";
 
-echo "<h2>FUTÁS INDUL: 1. Lépés - BEOLVASÁS és SZINKRONIZÁLÁS (Generált SKU alapú)</h2>";
+// --- 1. ADATBÁZIS KAPCSOLAT (RETRY-VAL) ---
+$env = [
+    'DB_HOST' => getenv('DB_HOST'),
+    'DB_USER' => getenv('DB_USER'),
+    'DB_PASS' => getenv('DB_PASS'),
+    'DB_NAME' => getenv('DB_NAME'),
+    'DB_PORT' => (int)getenv('DB_PORT'),
+    'DB_SSLMODE' => getenv('DB_SSLMODE')
+];
 
-// --- 1. ADATBÁZIS KAPCSOLAT ---
-$host = getenv('DB_HOST');
-$username = getenv('DB_USER');
-$password = getenv('DB_PASS');
-$dbname = getenv('DB_NAME');
-$port = (int)getenv('DB_PORT');
-$sslmode = getenv('DB_SSLMODE');
-$conn = mysqli_init();
-if ($sslmode === 'require') { mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false); }
-if (!mysqli_real_connect($conn, $host, $username, $password, $dbname, $port, NULL, MYSQLI_CLIENT_SSL)) {
-    die("Connection failed: " . mysqli_connect_error());
+$conn = null;
+$maxRetries = 5;
+for ($i = 0; $i < $maxRetries; $i++) {
+    $conn = mysqli_init();
+    if ($env['DB_SSLMODE'] === 'require') {
+        mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
+    }
+    if (@mysqli_real_connect($conn, $env['DB_HOST'], $env['DB_USER'], $env['DB_PASS'], $env['DB_NAME'], $env['DB_PORT'], NULL, MYSQLI_CLIENT_SSL)) {
+        break;
+    }
+    echo "Kapcsolódás sikertelen... próbálkozás " . ($i + 1) . "/$maxRetries (5mp várakozás)<br>";
+    sleep(5);
 }
+if (!$conn) die("FATAL: Nem sikerült kapcsolódni a MySQL-hez!");
 mysqli_set_charset($conn, "utf8mb4");
 echo "Adatbázis-kapcsolat sikeres.<br>";
 
@@ -54,11 +63,15 @@ echo "Futás időbélyege: $run_timestamp <br>";
 $feeds_to_process = [
     [
         'url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/stockfirmati_final_feed_huf.csv',
-        'location_index' => 1, 'quantity_column_name' => 'Stockfirmati Raktár Inventory Qty', 'currency' => 'huf'
+        'location_index' => 1,
+        'quantity_column_name' => 'Stockfirmati Raktár Inventory Qty',
+        'currency' => 'huf'
     ],
     [
         'url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv',
-        'location_index' => 2, 'quantity_column_name' => 'Peppela Inventory Qty', 'currency' => 'huf'
+        'location_index' => 2,
+        'quantity_column_name' => 'Peppela Inventory Qty',
+        'currency' => 'huf'
     ],
 ];
 
@@ -124,7 +137,7 @@ foreach ($feeds_to_process as $feed) {
         'opt2_name' => array_search('option2 name', $normalizedHeaders),
         'opt2_val' => array_search('option2 value', $normalizedHeaders),
         'qty' => array_search(strtolower($feed['quantity_column_name']), $normalizedHeaders),
-        'is_changed' => array_search('is changed', $normalizedHeaders)
+        'is_changed' => array_search('is changed', $normalizedHeaders),
     ];
 
     $required = ['handle', 'title', 'vendor', 'sku', 'price', 'qty', 'is_changed'];
@@ -216,7 +229,7 @@ foreach ($feeds_to_process as $feed) {
                 }
             }
         }
-        $result->close(); // <--- EZT AZ EGY SORT ADD HOZZÁ IDE
+        $result->close();
     }
     fclose($temp);
     echo "Feed feldolgozva.<br>";
@@ -242,7 +255,6 @@ $archived_count = $stmt_archive->affected_rows;
 $stmt_archive->close();
 echo "Archiválásra megjelölve: <b>$archived_count</b> termék.<br>";
 
-echo "<h2>Befejezve: 1. Lépés - BEOLVASÁS és SZINKRONIZÁLÁS</h2>";
+echo "<h2>Befejezve: 1. LÉPÉS – BEOLVASÁS és SZINKRONIZÁLÁS</h2></pre>";
 $conn->close();
 ?>
-
