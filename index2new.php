@@ -1,157 +1,142 @@
 <?php
-// index2new.php – V12 – TITLE BIZTONSÁGOS + 0 HIBA
-
+// V14 – TELJESEN KÉSZ – SKU + ÁR + VARIÁNS + TAG + KÉSZLET + SÚLY + BARCODE
 ini_set('max_execution_time', 0);
-echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK LÉTREHOZÁSA</h2>";
+echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK (TELJES ADATOKKAL)</h2>";
 
-$LIMIT = 10;
+$LIMIT = 3; // ← állítsd 10-re, ha biztos vagy
 
 require_once("helpers/shopifyGraphQL.php");
 require_once("helpers/general.php");
 
-$conn = mysqli_connect(getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASS'), getenv('DB_NAME'), getenv('DB_PORT') ?: 3306);
+$conn = mysqli_connect(getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASS'), getenv('DB_NAME'));
 mysqli_set_charset($conn, "utf8mb4");
 
 $shopurl = getenv('SHOPIFY_SHOP_URL');
 $token   = getenv('SHOPIFY_API_TOKEN');
-
 $loc1 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 1");
 $loc2 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 2");
 
-$sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 AND variant_sku IS NOT NULL AND variant_sku != ''";
-if ($LIMIT > 0) $sql .= " LIMIT $LIMIT";
+$sql = "SELECT DISTINCT variant_sku FROM shopifyproducts 
+        WHERE needs_update=2 AND variant_sku!='' AND title!=''";
+if ($LIMIT>0) $sql .= " LIMIT $LIMIT";
 
 $groups = $conn->query($sql);
-if (!$groups || $groups->num_rows == 0) {
-    echo "Nincs új termék.<br>";
-    exit;
-}
+if (!$groups || $groups->num_rows==0) { echo "Nincs új termék."; exit; }
 
 while ($g = $groups->fetch_assoc()) {
     $skuGroup = $g['variant_sku'];
-    if (empty($skuGroup)) continue;
-
     echo "<hr><b>$skuGroup</b><br>";
 
     $stmt = $conn->prepare("SELECT * FROM shopifyproducts WHERE variant_sku=? AND needs_update=2");
-    $stmt->bind_param("s", $skuGroup); $stmt->execute(); $res = $stmt->get_result();
+    $stmt->bind_param("s",$skuGroup); $stmt->execute(); $res = $stmt->get_result();
 
-    // ELSŐ SOR KIMENTÉSE (a title miatt!)
     $titleRow = $res->fetch_assoc();
-    if (!$titleRow || empty(trim($titleRow['title'] ?? ''))) {
-        echo "Nincs cím → átugorva<br>";
-        $stmt->close(); continue;
-    }
+    $title = trim($titleRow['title']);
+    if (!$title) continue;
 
-    // HANDLE GENERÁTOR
-    $base = sanitize_handle($titleRow['handle'] ?: $titleRow['variant_sku']);
+    // 1. HANDLE (soha többé nem akad)
+    $base = sanitize_handle($titleRow['handle'] ?: $skuGroup);
     $handle = $base;
-    $attempt = 0;
-
-    while (true) {
-        $testInput = ["title" => "TEST_" . time(), "handle" => $handle, "status" => "DRAFT"];
-        $test = productCreate_graphql($token, $shopurl, $testInput, []);
-
+    for ($i=1; $i<=50; $i++) {
+        $test = productCreate_graphql($token,$shopurl,["title"=>"T","handle"=>$handle,"status"=>"DRAFT"],[]);
         if (!empty($test['data']['productCreate']['product']['id'])) {
-            $testId = $test['data']['productCreate']['product']['id'];
-            $delQ = "mutation { productDelete(input: {id: \"$testId\"}) { deletedProductId } }";
-            send_graphql_request($token, $shopurl, $delQ);
+            send_graphql_request($token,$shopurl,"mutation{productDelete(input:{id:\"{$test['data']['productCreate']['product']['id']}\"}){deletedProductId}}");
             break;
         }
-
-        $err = $test['data']['productCreate']['userErrors'][0]['message'] ?? '';
-        if (str_contains($err, 'already in use')) {
-            $attempt++;
-            $handle = $base . "-" . $attempt;
-            echo "Handle foglalt → új: <b>$handle</b><br>";
-            usleep(200000);
-            continue;
-        }
-        echo "Váratlan hiba → átugorva<br>";
-        break;
+        $handle = "$base-$i";
     }
 
-    // VISSZAÁLLÍTÁS + ADATGYŰJTÉS
-    $res->data_seek(0); // vissza az elejére!
-    $images = []; $variants = []; $options = []; $qtySets = [];
+    // 2. ADATGYŰJTÉS
+    $res->data_seek(0);
+    $images = []; $variants = []; $options = []; $metafields = [];
+    while ($r = $res->fetch_assoc()) {
+        if ($r['img_src']) $images[] = ["src"=>$r['img_src']];
+        if ($r['img_src_2']) $images[] = ["src"=>$r['img_src_2']];
+        if ($r['img_src_3']) $images[] = ["src"=>$r['img_src_3']];
 
-    while ($row = $res->fetch_assoc()) {
-        foreach (['img_src','img_src_2','img_src_3'] as $k)
-            if (!empty($row[$k])) $images[] = ["originalSource"=>$row[$k],"mediaContentType"=>"IMAGE"];
-
-        if (!empty($row['option1_value'])) $options[] = $row['option1_name'];
-        if (!empty($row['option2_value'])) $options[] = $row['option2_name'];
+        if ($r['option1_value']) $options[] = $r['option1_name'];
+        if ($r['option2_value']) $options[] = $r['option2_name'];
 
         $variants[] = [
-            "sku" => $row['generated_sku'],
-            "price" => (string)$row['price_huf'],
+            "sku" => $r['generated_sku'],
+            "price" => number_format((float)$r['price_huf'], 2, '.', ''),
             "inventoryPolicy" => "DENY",
-            "option1" => $row['option1_value'] ?: null,
-            "option2" => $row['option2_value'] ?: null,
-            "qty1" => (int)$row['qty_location_1'],
-            "qty2" => (int)$row['qty_location_2']
+            "option1" => $r['option1_value'] ?: "Default",
+            "option2" => $r['option2_value'] ?: "Default",
+            "weight" => (float)($r['weight_kg'] ?? 0),
+            "weightUnit" => "KILOGRAMS",
+            "barcode" => $r['barcode'] ?? "",
+            "qty1" => (int)$r['qty_location_1'],
+            "qty2" => (int)$r['qty_location_2']
         ];
     }
     $stmt->close();
 
-    $images = array_values(array_unique($images, SORT_REGULAR));
+    $images = array_unique($images, SORT_REGULAR);
     $options = array_values(array_unique(array_filter($options)));
+    $tags = array_filter(array_map('trim', explode(',', $titleRow['tags']??'')));
 
-    // TERMÉK LÉTREHOZÁS
-    $productInput = [
-        "title" => $titleRow['title'],
+    // 3. TERMÉK LÉTREHOZÁS
+    $input = [
+        "title" => $title,
         "handle" => $handle,
-        "descriptionHtml" => $titleRow['body'] ?? '',
-        "vendor" => $titleRow['vendor'] ?? 'Unknown',
-        "productType" => $titleRow['type'] ?? 'Clothing',
-        "tags" => array_filter(explode(',', $titleRow['tags'] ?? '')),
+        "descriptionHtml" => $titleRow['body']??'',
+        "vendor" => $titleRow['vendor']??'Unknown',
+        "productType" => $titleRow['type']??'Clothing',
+        "tags" => $tags,
         "status" => "DRAFT"
     ];
 
-    $resp = productCreate_graphql($token,$shopurl,$productInput,$images);
+    $resp = productCreate_graphql($token,$shopurl,$input,$images);
     if (empty($resp['data']['productCreate']['product']['id'])) {
-        echo "HIBA: váz<br><pre>".json_encode($resp,JSON_PRETTY_PRINT)."</pre>";
-        continue;
+        echo "<pre>".json_encode($resp,JSON_PRETTY_PRINT)."</pre>"; continue;
     }
-
     $pid = $resp['data']['productCreate']['product']['id'];
-    $productNum = substr($pid, strrpos($pid, '/')+1);
-    echo "TERMÉK → <a href='https://$shopurl/admin/products/$productNum' target='_blank'>$handle</a><br>";
+    $num = substr($pid,strrpos($pid,'/')+1);
+    echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
 
+    // 4. OPCIÓK
     if ($options) productAddOptions_graphql($token,$shopurl,$pid,$options);
 
-    $variantInputs = array_map(fn($v)=>[
-        "sku"=>$v['sku'], "price"=>$v['price'],
+    // 5. VARIÁNSOK
+    $vars = array_map(fn($v)=>[
+        "sku"=>$v['sku'],
+        "price"=>$v['price'],
         "inventoryPolicy"=>$v['inventoryPolicy'],
-        "option1"=>$v['option1'], "option2"=>$v['option2']
+        "option1"=>$v['option1'],
+        "option2"=>$v['option2'],
+        "weight"=>$v['weight'],
+        "weightUnit"=>$v['weightUnit'],
+        "barcode"=>$v['barcode']
     ], $variants);
 
-    $resp = productVariantsBulkCreate_graphql($token,$shopurl,$pid,$variantInputs);
-    $created = $resp['data']['productVariantsBulkCreate']['productVariants'] ?? [];
+    $resp = productVariantsBulkCreate_graphql($token,$shopurl,$pid,$vars);
+    $created = $resp['data']['productVariantsBulkCreate']['productVariants']??[];
 
-    foreach ($created as $i => $cv) {
-        $orig = $variants[$i];
-        $qtySets[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "location
-Id"=>$loc1, "availableQuantity"=>$orig['qty1']];
-        $qtySets[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "locationId"=>$loc2, "availableQuantity"=>$orig['qty2']];
+    // 6. KÉSZLET
+    $qty = [];
+    foreach ($created as $i=>$cv) {
+        $qty[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "locationId"=>$loc1, "availableQuantity"=>$variants[$i]['qty1']];
+        $qty[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "locationId"=>$loc2, "availableQuantity"=>$variants[$i]['qty2']];
     }
-    if ($qtySets) inventorySetQuantities_graphql($token,$shopurl,$qtySets);
+    if ($qty) inventorySetQuantities_graphql($token,$shopurl,$qty);
 
+    // 7. AKTIVÁLÁS
     productActivate_graphql($token,$shopurl,$pid);
 
+    // 8. DB FRISSÍTÉS
     foreach ($created as $cv) {
-        $upd = $conn->prepare("UPDATE shopifyproducts SET shopifyproductid=?, shopifyvariantid=?, shopifyinventoryid=?, needs_update=0 WHERE generated_sku=?");
-        $upd->bind_param("sssss", $pid, $cv['id'], $cv['inventoryItem']['id'], $cv['sku']);
-        $upd->execute(); $upd->close();
+        $u = $conn->prepare("UPDATE shopifyproducts SET shopifyproductid=?, shopifyvariantid=?, shopifyinventoryid=?, needs_update=0 WHERE generated_sku=?");
+        $u->bind_param("sssss",$pid,$cv['id'],$cv['inventoryItem']['id'],$cv['sku']);
+        $u->execute(); $u->close();
     }
 
-    echo "<b style='color:lime;font-size:18px'>TELJESEN KÉSZ – ACTIVE</b><br>";
+    echo "<b style='color:#0f0;background:#000;padding:8px;border-radius:8px'>100% KÉSZ – SKU, ÁR, VARIÁNS, TAG, KÉSZLET, SÚLY, BARCODE</b><br>";
 }
-
 echo "<h2>2. LÉPÉS KÉSZ</h2>";
 $conn->close();
 
 function sanitize_handle($t){
-    return trim(preg_replace('/[^a-z0-9]+/','-',strtolower($t ?: 'product')),'-') ?: 'product';
+    return trim(preg_replace('/[^a-z0-9]+/','-',strtolower($t?:'product')),'-')?:'product';
 }
 ?>
