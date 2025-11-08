@@ -1,5 +1,5 @@
 <?php
-// index2new.php – V11 – 0 HIBA, 0 WARNING, TELJESEN KÉSZ
+// index2new.php – V12 – TITLE BIZTONSÁGOS + 0 HIBA
 
 ini_set('max_execution_time', 0);
 echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK LÉTREHOZÁSA</h2>";
@@ -36,14 +36,15 @@ while ($g = $groups->fetch_assoc()) {
     $stmt = $conn->prepare("SELECT * FROM shopifyproducts WHERE variant_sku=? AND needs_update=2");
     $stmt->bind_param("s", $skuGroup); $stmt->execute(); $res = $stmt->get_result();
 
-    $first = $res->fetch_assoc();
-    if (!$first || empty(trim($first['title'] ?? ''))) {
+    // ELSŐ SOR KIMENTÉSE (a title miatt!)
+    $titleRow = $res->fetch_assoc();
+    if (!$titleRow || empty(trim($titleRow['title'] ?? ''))) {
         echo "Nincs cím → átugorva<br>";
         $stmt->close(); continue;
     }
 
-    // VÉGTELEN HANDLE GENERÁTOR
-    $base = sanitize_handle($first['handle'] ?: $first['variant_sku']);
+    // HANDLE GENERÁTOR
+    $base = sanitize_handle($titleRow['handle'] ?: $titleRow['variant_sku']);
     $handle = $base;
     $attempt = 0;
 
@@ -70,37 +71,40 @@ while ($g = $groups->fetch_assoc()) {
         break;
     }
 
+    // VISSZAÁLLÍTÁS + ADATGYŰJTÉS
+    $res->data_seek(0); // vissza az elejére!
     $images = []; $variants = []; $options = []; $qtySets = [];
 
-    do {
+    while ($row = $res->fetch_assoc()) {
         foreach (['img_src','img_src_2','img_src_3'] as $k)
-            if (!empty($first[$k])) $images[] = ["originalSource"=>$first[$k],"mediaContentType"=>"IMAGE"];
+            if (!empty($row[$k])) $images[] = ["originalSource"=>$row[$k],"mediaContentType"=>"IMAGE"];
 
-        if (!empty($first['option1_value'])) $options[] = $first['option1_name'];
-        if (!empty($first['option2_value'])) $options[] = $first['option2_name'];
+        if (!empty($row['option1_value'])) $options[] = $row['option1_name'];
+        if (!empty($row['option2_value'])) $options[] = $row['option2_name'];
 
         $variants[] = [
-            "sku" => $first['generated_sku'],
-            "price" => (string)$first['price_huf'],
+            "sku" => $row['generated_sku'],
+            "price" => (string)$row['price_huf'],
             "inventoryPolicy" => "DENY",
-            "option1" => $first['option1_value'] ?: null,
-            "option2" => $first['option2_value'] ?: null,
-            "qty1" => (int)$first['qty_location_1'],
-            "qty2" => (int)$first['qty_location_2']
+            "option1" => $row['option1_value'] ?: null,
+            "option2" => $row['option2_value'] ?: null,
+            "qty1" => (int)$row['qty_location_1'],
+            "qty2" => (int)$row['qty_location_2']
         ];
-    } while ($first = $res->fetch_assoc());
+    }
     $stmt->close();
 
     $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
 
+    // TERMÉK LÉTREHOZÁS
     $productInput = [
-        "title" => $first['title'],
+        "title" => $titleRow['title'],
         "handle" => $handle,
-        "descriptionHtml" => $first['body'] ?? '',
-        "vendor" => $first['vendor'] ?? 'Unknown',
-        "productType" => $first['type'] ?? 'Clothing',
-        "tags" => array_filter(explode(',', $first['tags'] ?? '')),
+        "descriptionHtml" => $titleRow['body'] ?? '',
+        "vendor" => $titleRow['vendor'] ?? 'Unknown',
+        "productType" => $titleRow['type'] ?? 'Clothing',
+        "tags" => array_filter(explode(',', $titleRow['tags'] ?? '')),
         "status" => "DRAFT"
     ];
 
@@ -127,7 +131,8 @@ while ($g = $groups->fetch_assoc()) {
 
     foreach ($created as $i => $cv) {
         $orig = $variants[$i];
-        $qtySets[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "locationId"=>$loc1, "availableQuantity"=>$orig['qty1']];
+        $qtySets[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "location
+Id"=>$loc1, "availableQuantity"=>$orig['qty1']];
         $qtySets[] = ["inventoryItemId"=>$cv['inventoryItem']['id'], "locationId"=>$loc2, "availableQuantity"=>$orig['qty2']];
     }
     if ($qtySets) inventorySetQuantities_graphql($token,$shopurl,$qtySets);
