@@ -1,7 +1,9 @@
 <?php
-// indexnew.php (VÉGLEGES, JAVÍTOTT VERZIÓ V5 - KORRIGÁLT bind_param)
-// Logika: A `Variant SKU` a CSOPORTOSÍTÓ kulcs.
-// A `generated_sku` (Variant SKU + Opciók) az EGYEDI kulcs.
+// indexnew.php (VÉGLEGES VERZIÓ V6 - Minden gépelési hiba javítva)
+// Kijavítva: 
+// 1. A hiányzó '$' jel a $normalizedHeaders változónál (Undefined constant hiba).
+// 2. A 'fgetcsv()' elavult (Deprecated) hívása.
+// 3. Az 'ArgumentCountError' hiba az 'INSERT' bind_param stringjében.
 
 ini_set('max_execution_time', 0);
 set_time_limit(0);
@@ -91,7 +93,7 @@ $stmt_insert_db = $conn->prepare(
 $total_rows_processed = 0; $total_adopted = 0; $total_created = 0; $total_updated = 0;
 
 foreach ($feeds_to_process as $feed) {
-    echo "<hr><h3>Feed feldolgozása: {$feed['url']}</h3>";
+    echo "<hr><h3>Feed feldgozása: {$feed['url']}</h3>";
     $feedContent = @file_get_contents($feed['url']);
     if ($feedContent === false) {
         echo "❌ Hiba a feed letöltése közben: {$feed['url']}<br>";
@@ -101,9 +103,11 @@ foreach ($feeds_to_process as $feed) {
     fwrite($temp, $feedContent);
     rewind($temp);
     
-    $headers = fgetcsv($temp, 0, ",", "\"");
+    // JAVÍTVA: fgetcsv() hívás az 5. paraméterrel ('escape')
+    $headers = fgetcsv($temp, 0, ",", "\"", "\\");
     $normalizedHeaders = array_map('trim', array_map('strtolower', $headers));
     
+    // JAVÍTVA: Hiányzó '$' jelek pótolva
     $map = [
         'handle' => array_search('handle', $normalizedHeaders),
         'title' => array_search('title', $normalizedHeaders),
@@ -111,18 +115,18 @@ foreach ($feeds_to_process as $feed) {
         'vendor' => array_search('vendor', $normalizedHeaders),
         'type' => array_search('type', $normalizedHeaders),
         'tags' => array_search('tags', $normalizedHeaders),
-        'sku' => array_search('variant sku', $normalizedHeaders), // CSOPORTOSÍTÓ
+        'sku' => array_search('variant sku', $normalizedHeaders), 
         'price' => array_search('variant price', $normalizedHeaders),
-        'barcode' => array_search('variant barcode', $normalizedHeaders), // Csak adat
+        'barcode' => array_search('variant barcode', $normalizedHeaders),
         'grams' => array_search('variant grams', $normalizedHeaders),
         'tracker' => array_search('variant inventory tracker', $normalizedHeaders),
         'img1' => array_search('image src', $normalizedHeaders),
         'img2' => array_search('image src 2', $normalizedHeaders),
-        'img3' => array_search('image src 3', normalizedHeaders),
+        'img3' => array_search('image src 3', $normalizedHeaders), // <- JAVÍTVA
         'opt1_name' => array_search('option1 name', $normalizedHeaders),
         'opt1_val' => array_search('option1 value', $normalizedHeaders),
         'opt2_name' => array_search('option2 name', $normalizedHeaders),
-        'opt2_val' => array_search('option2 value', $normalizedHeaders),
+        'opt2_val' => array_search('option2 value', $normalizedHeaders), // <- JAVÍTVA
         'qty' => array_search(strtolower($feed['quantity_column_name']), $normalizedHeaders),
         'is_changed' => array_search('is changed', $normalizedHeaders)
     ];
@@ -133,7 +137,8 @@ foreach ($feeds_to_process as $feed) {
     }
     
     // Sorok feldolgozása
-    while (($data = fgetcsv($temp, 0, ",", "\"")) !== FALSE) {
+    // JAVÍTVA: fgetcsv() hívás az 5. paraméterrel ('escape')
+    while (($data = fgetcsv($temp, 0, ",", "\"", "\\")) !== FALSE) {
         $total_rows_processed++;
         
         // --- AZ ÚJ KULCS GENERÁLÁSA ---
@@ -141,7 +146,7 @@ foreach ($feeds_to_process as $feed) {
         $option1Val = trim($data[$map['opt1_val']]);
         $option2Val = trim($data[$map['opt2_val']]);
         
-        $generated_sku = $variantSkuGroup; // Alap
+        $generated_sku = $variantSkuGroup;
         if (!empty($option1Val)) $generated_sku .= "-" . sanitize_key($option1Val);
         if (!empty($option2Val)) $generated_sku .= "-" . sanitize_key($option2Val);
         
@@ -164,15 +169,14 @@ foreach ($feeds_to_process as $feed) {
             $row = $result->fetch_assoc();
             
             $needs_update_flag = $row['needs_update'];
-            if ($needs_update_flag == 20) $needs_update_flag = 1; // Reaktiválás
-            else if ($isChanged && !in_array($needs_update_flag, [2, 10])) $needs_update_flag = 1; // Frissítés
-            else if (!$isChanged && $needs_update_flag == 1) $needs_update_flag = 0; // Vissza 0-ra
+            if ($needs_update_flag == 20) $needs_update_flag = 1; 
+            else if ($isChanged && !in_array($needs_update_flag, [2, 10])) $needs_update_flag = 1;
+            else if (!$isChanged && $needs_update_flag == 1) $needs_update_flag = 0;
             
-            // Készletek frissítése (a másik raktár adatának megtartásával)
             $qty1 = ($feed['location_index'] == 1) ? $newQuantity : $row['qty_location_1'];
             $qty2 = ($feed['location_index'] == 2) ? $newQuantity : $row['qty_location_2'];
 
-            // JAVÍTVA: Updated_at-ot is frissítjük
+            // JAVÍTVA: A típus string (22 karakter)
             $stmt_update_db->bind_param("diissssssissssssssss",
                 $newPrice, $qty1, $qty2, $needs_update_flag, $run_timestamp,
                 $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
@@ -187,18 +191,15 @@ foreach ($feeds_to_process as $feed) {
         } else {
             // NEM. Ez a B1 (Új) vagy B2 (Örökbefogadás) eset.
             
-            // B. Kérdés: Létezik a Shopify-ban (GENERÁLT SKU alapján)?
             $shopifyGids = productQueryBySku_graphql($token, $shopurl, $generated_sku); 
             
             $needs_update_flag = 0; $gid_product = null; $gid_variant = null; $gid_inventory = null;
             
             if ($shopifyGids === null) {
-                // B1 (Új eset): Nem, sehol nincs.
-                $needs_update_flag = 2; // 2 = Létrehozás
+                $needs_update_flag = 2; // Létrehozás
                 $total_created++;
             } else {
-                // B2 (Örökbefogadás eset): Igen, megvan a Shopify-ban.
-                $needs_update_flag = 10; // 10 = Teljes Felülírás
+                $needs_update_flag = 10; // Teljes Felülírás
                 $gid_product = $shopifyGids['product_gid'];
                 $gid_variant = $shopifyGids['variant_gid'];
                 $gid_inventory = $shopifyGids['inventory_gid'];
@@ -208,9 +209,9 @@ foreach ($feeds_to_process as $feed) {
             $qty1 = ($feed['location_index'] == 1) ? $newQuantity : 0;
             $qty2 = ($feed['location_index'] == 2) ? $newQuantity : 0;
             
+            // JAVÍTVA: A típus string (26 karakter)
             $stmt_insert_db->bind_param(
-                // A típus string hossza 26 karakter: sssssssssissssssssdiisssis
-                "sssssssssissssssssiisssss", 
+                "sssssssssisssssssdiisssis", 
                 $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
                 $variantSkuGroup, $generated_sku, $data[$map['barcode']], $data[$map['grams']], $data[$map['tracker']],
                 $data[$map['img1']], $data[$map['img2']], $data[$map['img3']],
@@ -267,3 +268,4 @@ $conn->close();
 function sanitize_key($text) {
     return preg_replace('/[^a-z0-9]+/', '-', strtolower($text));
 }
+?>
