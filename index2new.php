@@ -76,6 +76,7 @@ while ($group_row = $group_result->fetch_assoc()) {
         if (!$first_row) $first_row = $variant_row;
         $local_ids_to_update[] = $variant_row['id'];
 
+        // JAVÍTOTT BLOKK
         $variant_input = [
             "sku" => $variant_row['generated_sku'],
             "price" => (string)$variant_row['price_huf'],
@@ -83,12 +84,20 @@ while ($group_row = $group_result->fetch_assoc()) {
             "inventoryQuantities" => [
                 ["locationId" => $location_gid_1, "availableQuantity" => (int)$variant_row['qty_location_1']],
                 ["locationId" => $location_gid_2, "availableQuantity" => (int)$variant_row['qty_location_2']]
-            ]
+            ],
+            "options" => [] // <-- ÚJ: Hozzáadunk egy üres 'options' tömböt
         ];
-        if (!empty($variant_row['option1_value'])) $variant_input["option1"] = $variant_row['option1_value'];
-        if (!empty($variant_row['option2_value'])) $variant_input["option2"] = $variant_row['option2_value'];
-        $variants_data[] = $variant_input;
 
+        // ÚJ: Az 'options' tömböt töltjük fel, nem 'option1'-et hozunk létre
+        if (!empty($variant_row['option1_value'])) {
+            $variant_input["options"][] = $variant_row['option1_value'];
+        }
+        if (!empty($variant_row['option2_value'])) {
+            $variant_input["options"][] = $variant_row['option2_value'];
+        }
+        // (Ha lenne option3, az is ide kerülne)
+        
+        $variants_data[] = $variant_input;
 // JAVÍTVA: Hozzáadtuk a mediaContentType-ot
         if (!empty($variant_row['img_src'])) $images_data[] = ["originalSource" => $variant_row['img_src'], "mediaContentType" => "IMAGE"];
         if (!empty($variant_row['img_src_2'])) $images_data[] = ["originalSource" => $variant_row['img_src_2'], "mediaContentType" => "IMAGE"];
@@ -177,6 +186,7 @@ function sanitize_handle($text) {
     return $text ?: 'product';
 }
 ?>
+
 
 
 
