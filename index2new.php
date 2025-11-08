@@ -1,10 +1,10 @@
 <?php
-// index2new.php – V9 – HANDLE-KONFLIKTUS KEZELŐ + BULLETPROOF
+// index2new.php – V10 – VÉGTELEN HANDLE + 0 HIBA
 
 ini_set('max_execution_time', 0);
 echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK LÉTREHOZÁSA</h2>";
 
-$LIMIT = 10;  // ← állítsd 1, 10, 50-re
+$LIMIT = 10;  // ← állítsd 1/10/50-re
 
 require_once("helpers/shopifyGraphQL.php");
 require_once("helpers/general.php");
@@ -37,32 +37,49 @@ while ($g = $groups->fetch_assoc()) {
     $stmt->bind_param("s", $skuGroup); $stmt->execute(); $res = $stmt->get_result();
 
     $first = $res->fetch_assoc();
-    if (!$first || empty($first['title'])) {
+    if (!$first || empty($trim($first['title']))) {
         echo "Nincs cím → átugorva<br>";
         $stmt->close(); continue;
     }
 
-    // AUTOMATA HANDLE GENERÁTOR (ha foglalt)
-    $base_handle = sanitize_handle($first['handle'] ?: $first['variant_sku']);
-    $handle = $base_handle;
-
-    // Próbáljuk, amíg nem jó
+    // ÚJ: VÉGTELEN HANDLE GENERÁTOR
+    $base = sanitize_handle($first['handle'] ?: $first['variant_sku']);
+    $handle = $base;
     $attempt = 0;
+
     while (true) {
-        $testInput = ["title" => "TEST", "handle" => $handle, "status" => "DRAFT"];
+        $testInput = [
+            "title" => "HANDLE_TEST_" . time(),
+            "handle" => $handle,
+            "status" => "DRAFT"
+        ];
         $test = productCreate_graphql($token, $shopurl, $testInput, []);
-        if (!empty($test['data']['productCreate']['userErrors'])) {
-            $err = $test['data']['productCreate']['userErrors'][0]['message'] ?? '';
-            if (str_contains($err, 'already in use')) {
-                $attempt++;
-                $handle = $base_handle . "-" . $attempt;
-                echo "Handle foglalt → próbálom: $handle<br>";
-                continue;
-            }
+
+        // Ha nincs hiba → handle szabad
+        if (!empty($test['data']['productCreate']['product']['id'])) {
+            // Töröljük a teszt terméket
+            $testId = $test['data']['productCreate']['product']['id'];
+            $delQ = "mutation { productDelete(input: {id: \"$testId\"}) { deletedProductId } }";
+            send_graphql_request($token, $shopurl, $delQ);
+            break;
         }
-        break; // sikeres vagy más hiba
+
+        // Ha handle hiba → újat próbálunk
+        $err = $test['data']['productCreate']['userErrors'][0]['message'] ?? '';
+        if (str_contains($err, 'already in use')) {
+            $attempt++;
+            $handle = $base . "-" . $attempt;
+            echo "Handle foglalt → új: <b>$handle</b><br>";
+            usleep(200000); // 0.2 mp várakozás
+            continue;
+        }
+
+        // Más hiba → kilépünk
+        echo "Váratlan hiba a handle tesztben!<br>";
+        break;
     }
 
+    // MOST MÁR BIZTOS SZABAD A HANDLE
     $images = []; $variants = []; $options = []; $qtySets = [];
 
     do {
@@ -87,7 +104,7 @@ while ($g = $groups->fetch_assoc()) {
     $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
 
-    // VALÓDI TERMÉK LÉTREHOZÁS
+    // VALÓDI TERMÉK
     $productInput = [
         "title" => $first['title'],
         "handle" => $handle,
@@ -105,7 +122,8 @@ while ($g = $groups->fetch_assoc()) {
     }
 
     $pid = $resp['data']['productCreate']['product']['id'];
-    echo "TERMÉK LÉTREHOZVA: <a href='https://$shopurl/admin/products/" . substr($pid, strrpos($pid, '/')+1) . "' target='_blank'>$handle</a><br>";
+    $productNum = substr($pid, strrpos($pid, '/')+1);
+    echo "TERMÉK LÉTREHOZVA → <a href='https://$shopurl/admin/products/$productNum' target='_blank'>$handle</a><br>";
 
     if ($options) productAddOptions_graphql($token,$shopurl,$pid,$options);
 
@@ -133,7 +151,7 @@ while ($g = $groups->fetch_assoc()) {
         $upd->execute(); $upd->close();
     }
 
-    echo "<b style='color:green'>TELJESEN KÉSZ – Shopify-ban ACTIVE</b><br>";
+    echo "<b style='color:lime;font-size:18px'>TELJESEN KÉSZ – ACTIVE</b><br>";
 }
 
 echo "<h2>2. LÉPÉS KÉSZ</h2>";
