@@ -27,6 +27,8 @@ for ($i = 0; $i < $maxRetries; $i++) {
 if (!$conn) die("FATAL: MySQL hiba!");
 mysqli_set_charset($conn, "utf8mb4");
 
+require_once("helpers/shopifyGraphQL.php");
+
 $shopurl = getenv('SHOPIFY_SHOP_URL');
 $token = getenv('SHOPIFY_API_TOKEN');
 $loc1 = getShopifyLocationGid($token, $shopurl, "Italy Vogue Premiere Warehouse 1");
@@ -160,3 +162,4 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
