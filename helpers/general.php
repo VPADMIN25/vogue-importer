@@ -1,11 +1,11 @@
 <?php
+// helpers/general.php
 
 function applyPriceMarkupSettingsRow19443($price, $settingsRow){
     $newprice = $price;
     $markupenabled = $settingsRow['markupenabled'];
     $markuptype = $settingsRow['markuptype'];
     $markupval = $settingsRow['markupval'];
-    
     $markupround = $settingsRow['markupround'];
     if($markupenabled == 1){
         if ($markuptype == "FIXED") {
@@ -13,14 +13,10 @@ function applyPriceMarkupSettingsRow19443($price, $settingsRow){
         } else {
             $newprice = $price + $price * $markupval / 100;
         }		
-        //if ($markupround) {
-            $newprice = round($newprice,1);
-       // }
+        $newprice = round($newprice,1);
     }	
     return $newprice;
 }
-
-
 
 function applyPriceMarkup($price, $markupenabled, $markuptype, $markupval, $markupround){
     $newprice = $price;
@@ -43,8 +39,6 @@ function applyPriceMarkupSettingsRow($price, $settingsRow){
     $markuptype = $settingsRow['markuptype'];
     $markupval = $settingsRow['markupval'];
     $markupround = $settingsRow['markupround'];
-    
-
     if($markupenabled == 1){
         if ($markuptype == "FIXED") {
             $newprice = $price + $markupval;
@@ -57,7 +51,4 @@ function applyPriceMarkupSettingsRow($price, $settingsRow){
     }	
     return $newprice;
 }
-
-// A HIBÁS "}" KARAKTER INNEN LETT ELTÁVOLÍTVA
-
 ?>
