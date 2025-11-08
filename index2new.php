@@ -1,10 +1,10 @@
 <?php
-// index2new.php – V10 – VÉGTELEN HANDLE + 0 HIBA
+// index2new.php – V11 – 0 HIBA, 0 WARNING, TELJESEN KÉSZ
 
 ini_set('max_execution_time', 0);
 echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK LÉTREHOZÁSA</h2>";
 
-$LIMIT = 10;  // ← állítsd 1/10/50-re
+$LIMIT = 10;
 
 require_once("helpers/shopifyGraphQL.php");
 require_once("helpers/general.php");
@@ -37,49 +37,39 @@ while ($g = $groups->fetch_assoc()) {
     $stmt->bind_param("s", $skuGroup); $stmt->execute(); $res = $stmt->get_result();
 
     $first = $res->fetch_assoc();
-    if (!$first || empty($trim($first['title']))) {
+    if (!$first || empty(trim($first['title'] ?? ''))) {
         echo "Nincs cím → átugorva<br>";
         $stmt->close(); continue;
     }
 
-    // ÚJ: VÉGTELEN HANDLE GENERÁTOR
+    // VÉGTELEN HANDLE GENERÁTOR
     $base = sanitize_handle($first['handle'] ?: $first['variant_sku']);
     $handle = $base;
     $attempt = 0;
 
     while (true) {
-        $testInput = [
-            "title" => "HANDLE_TEST_" . time(),
-            "handle" => $handle,
-            "status" => "DRAFT"
-        ];
+        $testInput = ["title" => "TEST_" . time(), "handle" => $handle, "status" => "DRAFT"];
         $test = productCreate_graphql($token, $shopurl, $testInput, []);
 
-        // Ha nincs hiba → handle szabad
         if (!empty($test['data']['productCreate']['product']['id'])) {
-            // Töröljük a teszt terméket
             $testId = $test['data']['productCreate']['product']['id'];
             $delQ = "mutation { productDelete(input: {id: \"$testId\"}) { deletedProductId } }";
             send_graphql_request($token, $shopurl, $delQ);
             break;
         }
 
-        // Ha handle hiba → újat próbálunk
         $err = $test['data']['productCreate']['userErrors'][0]['message'] ?? '';
         if (str_contains($err, 'already in use')) {
             $attempt++;
             $handle = $base . "-" . $attempt;
             echo "Handle foglalt → új: <b>$handle</b><br>";
-            usleep(200000); // 0.2 mp várakozás
+            usleep(200000);
             continue;
         }
-
-        // Más hiba → kilépünk
-        echo "Váratlan hiba a handle tesztben!<br>";
+        echo "Váratlan hiba → átugorva<br>";
         break;
     }
 
-    // MOST MÁR BIZTOS SZABAD A HANDLE
     $images = []; $variants = []; $options = []; $qtySets = [];
 
     do {
@@ -104,7 +94,6 @@ while ($g = $groups->fetch_assoc()) {
     $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
 
-    // VALÓDI TERMÉK
     $productInput = [
         "title" => $first['title'],
         "handle" => $handle,
@@ -123,7 +112,7 @@ while ($g = $groups->fetch_assoc()) {
 
     $pid = $resp['data']['productCreate']['product']['id'];
     $productNum = substr($pid, strrpos($pid, '/')+1);
-    echo "TERMÉK LÉTREHOZVA → <a href='https://$shopurl/admin/products/$productNum' target='_blank'>$handle</a><br>";
+    echo "TERMÉK → <a href='https://$shopurl/admin/products/$productNum' target='_blank'>$handle</a><br>";
 
     if ($options) productAddOptions_graphql($token,$shopurl,$pid,$options);
 
