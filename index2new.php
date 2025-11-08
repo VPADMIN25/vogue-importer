@@ -114,7 +114,7 @@ while ($group_row = $group_result->fetch_assoc()) {
         "tags" => $first_row['tags'],
         "options" => array_values($options_array),
         "variants" => $variants_data,
-        "images" => $images_data,
+        "media" => $images_data,
         "status" => "ACTIVE"
     ];
 
@@ -166,5 +166,6 @@ function sanitize_handle($text) {
     return $text ?: 'product';
 }
 ?>
+
 
 
