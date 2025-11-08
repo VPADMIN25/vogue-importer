@@ -89,9 +89,10 @@ while ($group_row = $group_result->fetch_assoc()) {
         if (!empty($variant_row['option2_value'])) $variant_input["option2"] = $variant_row['option2_value'];
         $variants_data[] = $variant_input;
 
-        if (!empty($variant_row['img_src'])) $images_data[] = ["originalSource" => $variant_row['img_src']];
-        if (!empty($variant_row['img_src_2'])) $images_data[] = ["originalSource" => $variant_row['img_src_2']];
-        if (!empty($variant_row['img_src_3'])) $images_data[] = ["originalSource" => $variant_row['img_src_3']];
+// JAVÍTVA: Hozzáadtuk a mediaContentType-ot
+        if (!empty($variant_row['img_src'])) $images_data[] = ["originalSource" => $variant_row['img_src'], "mediaContentType" => "IMAGE"];
+        if (!empty($variant_row['img_src_2'])) $images_data[] = ["originalSource" => $variant_row['img_src_2'], "mediaContentType" => "IMAGE"];
+        if (!empty($variant_row['img_src_3'])) $images_data[] = ["originalSource" => $variant_row['img_src_3'], "mediaContentType" => "IMAGE"];
 
         if (!empty($variant_row['option1_name']) && !in_array($variant_row['option1_name'], $options_array)) {
             $options_array[] = $variant_row['option1_name'];
@@ -176,6 +177,7 @@ function sanitize_handle($text) {
     return $text ?: 'product';
 }
 ?>
+
 
 
 
