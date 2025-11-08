@@ -23,7 +23,6 @@ echo "Adatbázis-kapcsolat sikeres.<br>";
 
 // --- 2. HELPERS ÉS SHOPIFY KREDENCIÁLISOK ---
 require_once("helpers/shopifyGraphQL.php");
-require_once("helpers/deschelper.php");
 require_once("helpers/general.php");
 
 $shopurl = getenv('SHOPIFY_SHOP_URL');
@@ -167,3 +166,4 @@ function sanitize_handle($text) {
     return $text ?: 'product';
 }
 ?>
+
