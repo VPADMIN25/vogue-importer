@@ -18,21 +18,27 @@ $env = [
 ];
 
 $conn = null;
-$maxRetries = 10;
+$maxRetries = 15;
+$connectTimeout = 30;
+
 for ($i = 0; $i < $maxRetries; $i++) {
     $conn = mysqli_init();
     if ($env['DB_SSLMODE'] === 'require') {
         mysqli_options($conn, MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
     }
-    mysqli_options($conn, MYSQLI_OPT_CONNECT_TIMEOUT, 30);  // 30 mp timeout
+    mysqli_options($conn, MYSQLI_OPT_CONNECT_TIMEOUT, $connectTimeout);
     
     if (@mysqli_real_connect($conn, $env['DB_HOST'], $env['DB_USER'], $env['DB_PASS'], $env['DB_NAME'], $env['DB_PORT'], NULL, MYSQLI_CLIENT_SSL)) {
+        echo "Kapcsolódva: {$env['DB_HOST']}:{$env['DB_PORT']} (próbálkozás: " . ($i + 1) . ")\n";
         break;
     }
-    echo "Kapcsolódás sikertelen... próbálkozás " . ($i + 1) . "/$maxRetries (10mp várakozás)\n";
-    sleep(10);
+    
+    $error = mysqli_connect_error();
+    echo "Kapcsolódás sikertelen (próbálkozás: " . ($i + 1) . "/$maxRetries): $error\n";
+    if ($i < $maxRetries - 1) sleep(15);
 }
-if (!$conn) die("FATAL: Nem sikerült kapcsolódni a MySQL-hez! Ellenőrizd a host/port/firewall-t!");
+
+if (!$conn) die("FATAL: Nem sikerült kapcsolódni a MySQL-hez 15 próbálkozás után!");
 mysqli_set_charset($conn, "utf8mb4");
 echo "Kapcsolódva: {$env['DB_HOST']}\n";
 
@@ -153,4 +159,5 @@ echo "<hr><b>Feldolgozva: $total_rows | Új: $total_created | Frissítve: $total
 echo "<h2>1. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
 
