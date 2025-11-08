@@ -118,9 +118,10 @@ GRAPHQL;
 }
 
 function productCreate_graphql($token, $shopurl, $variables) {
+// JAVÍTVA: A mutáció fejlécét kiegészítettük a $media változóval
     $query = <<<'GRAPHQL'
-mutation productCreate($input: ProductInput!) {
-    productCreate(input: $input) {
+mutation productCreate($input: ProductInput!, $media: [CreateMediaInput!]) {
+    productCreate(input: $input, media: $media) {
         product {
             id
             variants(first: 250) { 
@@ -214,3 +215,4 @@ GRAPHQL;
     
     return send_graphql_request($token, $shopurl, $query, $variables);
 }
+
