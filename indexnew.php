@@ -1,5 +1,5 @@
 <?php
-// indexnew.php (VÉGLEGES, JAVÍTOTT VERZIÓ V4 - Hibátlan SQL)
+// indexnew.php (VÉGLEGES, JAVÍTOTT VERZIÓ V5 - KORRIGÁLT bind_param)
 // Logika: A `Variant SKU` a CSOPORTOSÍTÓ kulcs.
 // A `generated_sku` (Variant SKU + Opciók) az EGYEDI kulcs.
 
@@ -74,7 +74,6 @@ $stmt_update_db = $conn->prepare(
      WHERE generated_sku = ?"
 );
 // Beszúrás: Teljesen új (vagy örökbefogadott) sor
-// JAVÍTVA: Eltávolítva created_at, updated_at a beillesztendő mezőkből (a hiba forrása)
 $stmt_insert_db = $conn->prepare(
     "INSERT INTO shopifyproducts (
         handle, title, body, vendor, type, tags, 
@@ -83,8 +82,9 @@ $stmt_insert_db = $conn->prepare(
         option1_name, option1_value, option2_name, option2_value,
         price_huf, qty_location_1, qty_location_2, 
         shopifyproductid, shopifyvariantid, shopifyinventoryid,
-        needs_update, last_seen_in_feed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        needs_update, last_seen_in_feed,
+        created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())"
 );
 
 // --- 7. FEED FELDOLGOZÁS ---
@@ -118,7 +118,7 @@ foreach ($feeds_to_process as $feed) {
         'tracker' => array_search('variant inventory tracker', $normalizedHeaders),
         'img1' => array_search('image src', $normalizedHeaders),
         'img2' => array_search('image src 2', $normalizedHeaders),
-        'img3' => array_search('image src 3', $normalizedHeaders),
+        'img3' => array_search('image src 3', normalizedHeaders),
         'opt1_name' => array_search('option1 name', $normalizedHeaders),
         'opt1_val' => array_search('option1 value', $normalizedHeaders),
         'opt2_name' => array_search('option2 name', $normalizedHeaders),
@@ -172,6 +172,7 @@ foreach ($feeds_to_process as $feed) {
             $qty1 = ($feed['location_index'] == 1) ? $newQuantity : $row['qty_location_1'];
             $qty2 = ($feed['location_index'] == 2) ? $newQuantity : $row['qty_location_2'];
 
+            // JAVÍTVA: Updated_at-ot is frissítjük
             $stmt_update_db->bind_param("diissssssissssssssss",
                 $newPrice, $qty1, $qty2, $needs_update_flag, $run_timestamp,
                 $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
@@ -208,7 +209,8 @@ foreach ($feeds_to_process as $feed) {
             $qty2 = ($feed['location_index'] == 2) ? $newQuantity : 0;
             
             $stmt_insert_db->bind_param(
-                "sssssssssisssssssdiisssis", 
+                // A típus string hossza 26 karakter: sssssssssissssssssdiisssis
+                "sssssssssissssssssiisssss", 
                 $data[$map['handle']], $data[$map['title']], $data[$map['body']], $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
                 $variantSkuGroup, $generated_sku, $data[$map['barcode']], $data[$map['grams']], $data[$map['tracker']],
                 $data[$map['img1']], $data[$map['img2']], $data[$map['img3']],
@@ -265,4 +267,3 @@ $conn->close();
 function sanitize_key($text) {
     return preg_replace('/[^a-z0-9]+/', '-', strtolower($text));
 }
-?>
