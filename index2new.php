@@ -22,7 +22,7 @@ $token   = getenv('SHOPIFY_API_TOKEN');
 $loc1 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 1");
 $loc2 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 2");
 
-$sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 LIMIT 50";
+$sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 LIMIT 1";
 $groups = $conn->query($sql);
 
 while ($g = $groups->fetch_assoc()) {
@@ -127,3 +127,4 @@ function sanitize_handle($t){
     return trim(preg_replace('/[^a-z0-9]+/','-',strtolower($t)),'-') ?: 'product';
 }
 ?>
+
