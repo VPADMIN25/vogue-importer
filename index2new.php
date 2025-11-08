@@ -26,8 +26,15 @@ $sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 LI
 $groups = $conn->query($sql);
 
 while ($g = $groups->fetch_assoc()) {
-    $skuGroup = $g['variant_sku'];
-    echo "<hr><b>$skuGroup</b><br>";
+    $skuGroup = $g['variant_sku'];
+    
+    // JAVÍTÁS: Ellenőrizzük, hogy a variant_sku nem üres-e
+    if (empty($skuGroup)) {
+        echo "<hr><b>HIBA: Üres 'variant_sku' sort találtam (needs_update=2), átugrom.</b><br>";
+        continue; // Ugrás a következő SKU csoportra
+    }
+
+    echo "<hr><b>$skuGroup</b><br>";
 
     $stmt = $conn->prepare("SELECT * FROM shopifyproducts WHERE variant_sku=? AND needs_update=2");
     $stmt->bind_param("s",$skuGroup); $stmt->execute();
@@ -127,4 +134,5 @@ function sanitize_handle($t){
     return trim(preg_replace('/[^a-z0-9]+/','-',strtolower($t)),'-') ?: 'product';
 }
 ?>
+
 
