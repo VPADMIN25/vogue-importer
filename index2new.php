@@ -8,7 +8,10 @@ $LIMIT = 3; // ← állítsd 10-re, ha biztos vagy
 require_once("helpers/shopifyGraphQL.php");
 require_once("helpers/general.php");
 
-$conn = mysqli_connect(getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASS'), getenv('DB_NAME'));
+$conn = mysqli_connect(getenv('DB_HOST'), getenv('DB_USER'), getenv('DB_PASS'), getenv('DB_NAME'), 3306, getenv('DB_SOCKET') ?: '/var/run/mysqld/mysqld.sock');
+mysqli_options($conn, MYSQLI_OPT_CONNECT_TIMEOUT, 10);
+mysqli_options($conn, MYSQLI_OPT_READ_TIMEOUT, 30);
+if (!$conn) die("<b style='color:red'>MySQL nem elérhető – ellenőrizd a DO adatbázist!</b>");
 mysqli_set_charset($conn, "utf8mb4");
 
 $shopurl = getenv('SHOPIFY_SHOP_URL');
@@ -140,3 +143,4 @@ function sanitize_handle($t){
     return trim(preg_replace('/[^a-z0-9]+/','-',strtolower($t?:'product')),'-')?:'product';
 }
 ?>
+
