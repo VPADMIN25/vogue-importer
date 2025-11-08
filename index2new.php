@@ -1,11 +1,10 @@
 <?php
-// index2new.php – V8 –  BULLETPROOF EDITION
+// index2new.php – V9 – HANDLE-KONFLIKTUS KEZELŐ + BULLETPROOF
 
 ini_set('max_execution_time', 0);
 echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK LÉTREHOZÁSA</h2>";
 
-// LIMIT (1-1000)
-$LIMIT = 10;
+$LIMIT = 10;  // ← állítsd 1, 10, 50-re
 
 require_once("helpers/shopifyGraphQL.php");
 require_once("helpers/general.php");
@@ -19,44 +18,51 @@ $token   = getenv('SHOPIFY_API_TOKEN');
 $loc1 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 1");
 $loc2 = getShopifyLocationGid($token,$shopurl,"Italy Vogue Premiere Warehouse 2");
 
-// ELŐSZŰRÉS: csak NEM üres variant_sku-k!
-$sql = "SELECT DISTINCT variant_sku 
-        FROM shopifyproducts 
-        WHERE needs_update=2 
-          AND variant_sku IS NOT NULL 
-          AND variant_sku != ''";
+$sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 AND variant_sku IS NOT NULL AND variant_sku != ''";
 if ($LIMIT > 0) $sql .= " LIMIT $LIMIT";
 
 $groups = $conn->query($sql);
 if (!$groups || $groups->num_rows == 0) {
-    echo "Nincs feldolgozandó termék.<br>";
+    echo "Nincs új termék.<br>";
     exit;
 }
 
 while ($g = $groups->fetch_assoc()) {
     $skuGroup = $g['variant_sku'];
-
-    // GEMINI JAVÍTÁS: dupla biztosítás
-    if (empty($skuGroup)) {
-        echo "<hr><b style='color:orange'>ÜRES variant_sku → átugorva</b><br>";
-        continue;
-    }
+    if (empty($skuGroup)) continue;
 
     echo "<hr><b>$skuGroup</b><br>";
 
     $stmt = $conn->prepare("SELECT * FROM shopifyproducts WHERE variant_sku=? AND needs_update=2");
-    $stmt->bind_param("s", $skuGroup);
-    $stmt->execute();
-    $res = $stmt->get_result();
+    $stmt->bind_param("s", $skuGroup); $stmt->execute(); $res = $stmt->get_result();
 
     $first = $res->fetch_assoc();
     if (!$first || empty($first['title'])) {
-        echo "HIÁNYZIK a title → átugorva<br>";
-        $stmt->close();
-        continue;
+        echo "Nincs cím → átugorva<br>";
+        $stmt->close(); continue;
     }
 
-    $handle = sanitize_handle($first['handle'] ?: $first['variant_sku']);
+    // AUTOMATA HANDLE GENERÁTOR (ha foglalt)
+    $base_handle = sanitize_handle($first['handle'] ?: $first['variant_sku']);
+    $handle = $base_handle;
+
+    // Próbáljuk, amíg nem jó
+    $attempt = 0;
+    while (true) {
+        $testInput = ["title" => "TEST", "handle" => $handle, "status" => "DRAFT"];
+        $test = productCreate_graphql($token, $shopurl, $testInput, []);
+        if (!empty($test['data']['productCreate']['userErrors'])) {
+            $err = $test['data']['productCreate']['userErrors'][0]['message'] ?? '';
+            if (str_contains($err, 'already in use')) {
+                $attempt++;
+                $handle = $base_handle . "-" . $attempt;
+                echo "Handle foglalt → próbálom: $handle<br>";
+                continue;
+            }
+        }
+        break; // sikeres vagy más hiba
+    }
+
     $images = []; $variants = []; $options = []; $qtySets = [];
 
     do {
@@ -78,10 +84,10 @@ while ($g = $groups->fetch_assoc()) {
     } while ($first = $res->fetch_assoc());
     $stmt->close();
 
-    $images  = array_values(array_unique($images, SORT_REGULAR));
+    $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
 
-    // TERMÉK VÁZ
+    // VALÓDI TERMÉK LÉTREHOZÁS
     $productInput = [
         "title" => $first['title'],
         "handle" => $handle,
@@ -97,10 +103,12 @@ while ($g = $groups->fetch_assoc()) {
         echo "HIBA: váz<br><pre>".json_encode($resp,JSON_PRETTY_PRINT)."</pre>";
         continue;
     }
+
     $pid = $resp['data']['productCreate']['product']['id'];
-    echo "Váz OK: $pid<br>";
+    echo "TERMÉK LÉTREHOZVA: <a href='https://$shopurl/admin/products/" . substr($pid, strrpos($pid, '/')+1) . "' target='_blank'>$handle</a><br>";
 
     if ($options) productAddOptions_graphql($token,$shopurl,$pid,$options);
+
     $variantInputs = array_map(fn($v)=>[
         "sku"=>$v['sku'], "price"=>$v['price'],
         "inventoryPolicy"=>$v['inventoryPolicy'],
