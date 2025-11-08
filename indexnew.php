@@ -1,5 +1,5 @@
 <?php
-// indexnew.php (Végleges Verzió V3 - A "Mester Agy")
+// indexnew.php (VÉGLEGES VERZIÓ V4 - Hibátlan SQL)
 // Logika: A `Variant SKU` a CSOPORTOSÍTÓ kulcs.
 // A `generated_sku` (Variant SKU + Opciók) az EGYEDI kulcs.
 
@@ -36,6 +36,7 @@ echo "✅ Shopify kredenciálisok betöltve ($shopurl).<br>";
 // --- 3. RAKTÁRHELYEK (LOCATIONS) ELLENŐRZÉSE ---
 $location_name_1 = "Italy Vogue Premiere Warehouse 1";
 $location_name_2 = "Italy Vogue Premiere Warehouse 2";
+// Ellenőrzés futtatása (a getShopifyLocationGid-nek most már működnie kell)
 if (empty(getShopifyLocationGid($token, $shopurl, $location_name_1)) || empty(getShopifyLocationGid($token, $shopurl, $location_name_2))) {
     die("❌ Kritikus hiba: A '$location_name_1' vagy '$location_name_2' raktárhely nem található!");
 }
@@ -69,10 +70,12 @@ $stmt_update_db = $conn->prepare(
         handle = ?, title = ?, body = ?, vendor = ?, type = ?, tags = ?, 
         variant_sku = ?, barcode = ?, grams = ?,
         img_src = ?, img_src_2 = ?, img_src_3 = ?,
-        option1_name = ?, option1_value = ?, option2_name = ?, option2_value = ?
+        option1_name = ?, option1_value = ?, option2_name = ?, option2_value = ?,
+        updated_at = NOW()
      WHERE generated_sku = ?"
 );
 // Beszúrás: Teljesen új (vagy örökbefogadott) sor
+// JAVÍTVA: Eltávolítva a user_id, és a created_at/updated_at behelyettesítve a NOW() függvénnyel
 $stmt_insert_db = $conn->prepare(
     "INSERT INTO shopifyproducts (
         handle, title, body, vendor, type, tags, 
@@ -81,9 +84,9 @@ $stmt_insert_db = $conn->prepare(
         option1_name, option1_value, option2_name, option2_value,
         price_huf, qty_location_1, qty_location_2, 
         shopifyproductid, shopifyvariantid, shopifyinventoryid,
-        needs_update, last_seen_in_feed, 
-        user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())"
+        needs_update, last_seen_in_feed,
+        created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())"
 );
 
 // --- 7. FEED FELDOLGOZÁS ---
@@ -265,3 +268,4 @@ function sanitize_key($text) {
     return preg_replace('/[^a-z0-9]+/', '-', strtolower($text));
 }
 ?>
+
