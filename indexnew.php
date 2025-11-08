@@ -216,6 +216,7 @@ foreach ($feeds_to_process as $feed) {
                 }
             }
         }
+        $result->close(); // <--- EZT AZ EGY SORT ADD HOZZÁ IDE
     }
     fclose($temp);
     echo "Feed feldolgozva.<br>";
@@ -244,3 +245,4 @@ echo "Archiválásra megjelölve: <b>$archived_count</b> termék.<br>";
 echo "<h2>Befejezve: 1. Lépés - BEOLVASÁS és SZINKRONIZÁLÁS</h2>";
 $conn->close();
 ?>
+
