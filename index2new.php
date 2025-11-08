@@ -103,8 +103,13 @@ while ($group_row = $group_result->fetch_assoc()) {
     $stmt->close();
 
     $images_data = array_values(array_unique(array_filter($images_data), SORT_REGULAR));
+   // ... (a 113. sor környéki blokk HELYETT)
     $handle_to_use = !empty($first_row['handle']) ? sanitize_handle($first_row['handle']) : sanitize_handle($first_row['variant_sku']);
 
+    // 1. A 'media' adat (korábbi $images_data) KÜLÖN van
+    $media_input = $images_data; 
+    
+    // 2. A 'product_input' NEM TARTALMAZHATJA a 'media'-t
     $product_input = [
         "title" => $first_row['title'],
         "handle" => $handle_to_use,
@@ -114,14 +119,19 @@ while ($group_row = $group_result->fetch_assoc()) {
         "tags" => $first_row['tags'],
         "options" => array_values($options_array),
         "variants" => $variants_data,
-        "media" => $images_data,
         "status" => "ACTIVE"
     ];
 
-    $variables = ["input" => $product_input];
+    // 3. A 'variables' tömb mindkét fő kulcsot tartalmazza
+    $variables = [
+        "input" => $product_input,
+        "media" => $media_input
+    ];
+    
     echo "Shopify productCreate hívása (Handle: $handle_to_use)...<br>";
+    // A $variables tömböt adjuk át (ez most már az 'input'-ot ÉS a 'media'-t is tartalmazza)
     $response = productCreate_graphql($token, $shopurl, $variables);
-
+    // ...
     if (isset($response['data']['productCreate']['product']['id'])) {
         $product = $response['data']['productCreate']['product'];
         $product_gid = $product['id'];
@@ -166,6 +176,7 @@ function sanitize_handle($text) {
     return $text ?: 'product';
 }
 ?>
+
 
 
 
