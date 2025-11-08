@@ -1,5 +1,5 @@
 <?php
-// helpers/shopifyGraphQL.php (VÉGLEGES V6 – 2024-04 KOMPATIBILIS)
+// helpers/shopifyGraphQL.php (V7 – 2025-10 + HIÁNYZÓ FÜGGVÉNYEK)
 
 ini_set('max_execution_time', 0);
 set_time_limit(0);
@@ -8,7 +8,7 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     $data = ['query' => $query];
     if (!empty($variables)) $data['variables'] = $variables;
 
-    $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json");
+    $ch = curl_init("https://$shopurl/admin/api/2025-10/graphql.json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => false,
@@ -23,10 +23,10 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
 
     $resp = curl_exec($ch);
     curl_close($ch);
+    usleep(200000);
     return json_decode($resp, true);
 }
 
-/* —— 1. RAKTÁRHELY —— */
 function getShopifyLocationGid($token, $shopurl, $name) {
     $q = "query { locations(first:20) { nodes { id name } } }";
     $r = send_graphql_request($token, $shopurl, $q);
@@ -35,7 +35,6 @@ function getShopifyLocationGid($token, $shopurl, $name) {
     return null;
 }
 
-/* —— 2. TERMÉK KERESÉSE SKU ALAPJÁN —— */
 function productQueryBySku_graphql($token, $shopurl, $sku) {
     $q = <<<'GRAPHQL'
 query($sku:String!){productVariants(first:1,query:$sku){nodes{id sku inventoryItem{id} product{id}}}}
@@ -50,7 +49,6 @@ GRAPHQL;
     ] : null;
 }
 
-/* —— 3. CSAK A TERMÉK VÁZ + KÉPEK (2024-04) —— */
 function productCreate_graphql($token, $shopurl, $input, $media = []) {
     $q = <<<'GRAPHQL'
 mutation($input:ProductInput!,$media:[CreateMediaInput!]){
@@ -60,29 +58,21 @@ mutation($input:ProductInput!,$media:[CreateMediaInput!]){
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, [
-        'input' => $input,
-        'media' => $media
-    ]);
+    return send_graphql_request($token, $shopurl, $q, ['input' => $input, 'media' => $media]);
 }
 
-/* —— 4. OPCIÓK HOZZÁADÁSA —— */
 function productAddOptions_graphql($token, $shopurl, $productId, $options) {
     $q = <<<'GRAPHQL'
 mutation($id:ID!,$options:[String!]!){
   productUpdate(input:{id:$id,options:$options}){
-    product{id options{name values}}
+    product{id}
     userErrors{field message}
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, [
-        'id' => $productId,
-        'options' => $options
-    ]);
+    return send_graphql_request($token, $shopurl, $q, ['id' => $productId, 'options' => $options]);
 }
 
-/* —— 5. VARIÁNTOK TÖMEGES HOZZÁADÁSA —— */
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
 mutation($productId:ID!,$variants:[ProductVariantInput!]!){
@@ -92,13 +82,21 @@ mutation($productId:ID!,$variants:[ProductVariantInput!]!){
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, [
-        'productId' => $productId,
-        'variants' => $variants
-    ]);
+    return send_graphql_request($token, $shopurl, $q, ['productId' => $productId, 'variants' => $variants]);
 }
 
-/* —— 6. KÉSZLET BEÁLLÍTÁSA —— */
+function productVariantsBulkUpdate_graphql($token, $shopurl, $productId, $variants) {
+    $q = <<<'GRAPHQL'
+mutation($productId:ID!,$variants:[ProductVariantInput!]!){
+  productVariantsBulkUpdate(productId:$productId,variants:$variants){
+    productVariants{id price}
+    userErrors{field message}
+  }
+}
+GRAPHQL;
+    return send_graphql_request($token, $shopurl, $q, ['productId' => $productId, 'variants' => $variants]);
+}
+
 function inventorySetQuantities_graphql($token, $shopurl, $sets) {
     $q = <<<'GRAPHQL'
 mutation($sets:[InventorySetQuantityInput!]!){
@@ -110,16 +108,32 @@ GRAPHQL;
     return send_graphql_request($token, $shopurl, $q, ['sets'=>$sets]);
 }
 
-/* —— 7. STÁTUSZ VÁLTÁS —— */
-function productActivate_graphql($token, $shopurl, $productId) {
+function productUpdateStatus_graphql($token, $shopurl, $productId, $status) {
     $q = <<<'GRAPHQL'
-mutation($id:ID!){
-  productUpdate(input:{id:$id,status:ACTIVE}){
+mutation($id:ID!,$status:ProductStatus!){
+  productUpdate(input:{id:$id,status:$status}){
     product{id status}
     userErrors{field message}
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, ['id'=>$productId]);
+    return send_graphql_request($token, $shopurl, $q, ['id'=>$productId, 'status'=>$status]);
+}
+
+function productFullUpdate_graphql($token, $shopurl, $productId, $input) {
+    $q = <<<'GRAPHQL'
+mutation($input:ProductInput!){
+  productUpdate(input:$input){
+    product{id}
+    userErrors{field message}
+  }
+}
+GRAPHQL;
+    $input['id'] = $productId;
+    return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
+}
+
+function productActivate_graphql($token, $shopurl, $productId) {
+    productUpdateStatus_graphql($token, $shopurl, $productId, 'ACTIVE');
 }
 ?>
