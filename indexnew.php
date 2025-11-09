@@ -1,11 +1,11 @@
 <?php
-// indexnew.php – V20 – CÍM = VENDOR + TELJES BIZTONSÁG
+// indexnew.php – V21 – VÉGLEGES (GENERATED_SKU ALAPÚ LOGIKA)
 ini_set('max_execution_time', 1800);  // 30 perc
 set_time_limit(1800);
 ini_set('memory_limit', '2G');
 
 echo "<pre style='font-family:Consolas;font-size:14px'>";
-echo "<h2>1. LÉPÉS – BEOLVASÁS + SZINKRONIZÁLÁS</h2>";
+echo "<h2>1. LÉPÉS – BEOLVASÁS + SZINKRONIZÁLÁS (V21 - EGYEDI VARIÁNS)</h2>";
 
 // --- KAPCSOLAT (RETRY) ---
 $env = [
@@ -43,6 +43,7 @@ mysqli_set_charset($conn, "utf8mb4");
 echo "Kapcsolódva: {$env['DB_HOST']}\n";
 
 require_once("helpers/shopifyGraphQL.php");
+require_once("helpers/general.php"); // Árrés betöltése
 $shopurl = getenv('SHOPIFY_SHOP_URL');
 $token = getenv('SHOPIFY_API_TOKEN');
 if (empty($shopurl) || empty($token)) die("Hiányzó SHOPIFY változók.");
@@ -55,9 +56,10 @@ $feeds = [
     ['url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv', 'location' => 2, 'qty_col' => 'Peppela Inventory Qty'],
 ];
 
-$stmt_check = $conn->prepare("SELECT id, needs_update, qty_location_1, qty_location_2 FROM shopifyproducts WHERE variant_sku = ?");
-$stmt_update = $conn->prepare("UPDATE shopifyproducts SET price_huf=?, qty_location_1=?, qty_location_2=?, needs_update=?, last_seen_in_feed=?, handle=?, title=?, body=?, vendor=?, type=?, tags=?, barcode=?, grams=?, img_src=?, img_src_2=?, img_src_3=?, option1_name=?, option1_value=?, option2_name=?, option2_value=? WHERE variant_sku=?");
-$stmt_insert = $conn->prepare("INSERT INTO shopifyproducts (variant_sku, generated_sku, handle, title, body, vendor, type, tags, price_huf, qty_location_1, qty_location_2, barcode, grams, img_src, img_src_2, img_src_3, option1_name, option1_value, option2_name, option2_value, needs_update, last_seen_in_feed, shopifyproductid, shopifyvariantid, shopifyinventoryid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+// === VÉGLEGES LOGIKA: GENERATED_SKU ALAPON MŰKÖDÜNK ===
+$stmt_check = $conn->prepare("SELECT id, needs_update, qty_location_1, qty_location_2, price_huf FROM shopifyproducts WHERE generated_sku = ?");
+$stmt_update = $conn->prepare("UPDATE shopifyproducts SET price_huf=?, qty_location_1=?, qty_location_2=?, needs_update=?, last_seen_in_feed=?, variant_sku=?, handle=?, title=?, body=?, vendor=?, type=?, tags=?, barcode=?, grams=?, img_src=?, img_src_2=?, img_src_3=?, option1_name=?, option1_value=?, option2_name=?, option2_value=? WHERE id=?");
+$stmt_insert = $conn->prepare("INSERT INTO shopifyproducts (generated_sku, variant_sku, handle, title, body, vendor, type, tags, price_huf, qty_location_1, qty_location_2, barcode, grams, img_src, img_src_2, img_src_3, option1_name, option1_value, option2_name, option2_value, needs_update, last_seen_in_feed, shopifyproductid, shopifyvariantid, shopifyinventoryid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
 foreach ($feeds as $feed) {
     echo "<hr><h3>Feed: {$feed['url']}</h3>";
@@ -81,17 +83,23 @@ foreach ($feeds as $feed) {
         $variantSkuGroup = trim($data[$map['variant sku']]);
         if (empty($variantSkuGroup)) { echo "ÜRES SKU → átugorva (sor: $total_rows)\n"; continue; }
 
+        // === AZ EGYEDI KULCS GENERÁLÁSA ===
         $option1Val = trim($data[$map['option1 value'] ?? ''] ?? '');
         $option2Val = trim($data[$map['option2 value'] ?? ''] ?? '');
         $generated_sku = $variantSkuGroup;
         if ($option1Val) $generated_sku .= "-" . preg_replace('/[^a-z0-9]+/', '-', strtolower($option1Val));
         if ($option2Val) $generated_sku .= "-" . preg_replace('/[^a-z0-9]+/', '-', strtolower($option2Val));
 
-        // VARIANT_SKU ELLENŐRZÉS (CSOPORT!)
-        $qty = ($feed['location'] == 1) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
-        $qty_other = ($feed['location'] == 2) ? $qty : 0;
+        // === HELYES ÁR ÉS KÉSZLET KISZÁMÍTÁSA ===
+        // ÁRRÉS ALKALMAZÁSA (Most 0% árréssel, ahogy kérted, de a logika itt van)
+        $csv_price = (float)($data[$map['variant price']] ?? 0);
+        $final_price = applyPriceMarkup($csv_price, 0, "PERCENT", 0, false); // Módosítsd ezt az árréshez!
+        
+        $qty1 = ($feed['location'] == 1) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
+        $qty2 = ($feed['location'] == 2) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
 
-        $stmt_check->bind_param("s", $variantSkuGroup);
+        // === VÉGLEGES LOGIKA (GENERATED_SKU ALAPON) ===
+        $stmt_check->bind_param("s", $generated_sku);
         $stmt_check->execute();
         $res = $stmt_check->get_result();
 
@@ -99,31 +107,38 @@ foreach ($feeds as $feed) {
 
         if ($res->num_rows > 0) {
             // === ESET 1: TERMÉK MÁR ISMERJÜK (GYORS) ===
-            // (Itt már nem hívunk API-t, csak frissítünk)
             $row = $res->fetch_assoc();
-            $needs_update = max(10, $row['needs_update'] == 20 ? 10 : $row['needs_update']); // 10-es zászló (frissítés), ha látjuk
             
-            // Itt kell a javítás, amit korábban beszéltünk
-            $qty1 = ($feed['location'] == 1) ? $qty : ($row['qty_location_1'] ?? 0);
-            $qty2 = ($feed['location'] == 2) ? $qty : ($row['qty_location_2'] ?? 0);
+            // Ha a CSV-ben 0 a készlet, de a másik feedben van, tartsuk meg a másik készletét
+            if ($feed['location'] == 1) {
+                $qty2 = $row['qty_location_2']; // Megtartjuk a Location 2 készletét
+            } else {
+                $qty1 = $row['qty_location_1']; // Megtartjuk a Location 1 készletét
+            }
 
-            $stmt_update->bind_param("diiisssssssssssssssss",
-                $data[$map['variant price']], $qty1, $qty2, $needs_update, $run_timestamp,
-                $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
+            // Csak akkor frissítünk, ha valami tényleg változott
+            if ($row['price_huf'] != $final_price || $row['qty_location_1'] != $qty1 || $row['qty_location_2'] != $qty2 || $row['needs_update'] == 20) {
+                $needs_update = 10; // 10 = Frissítés (vagy Reaktiválás)
+            } else {
+                $needs_update = $row['needs_update']; // Marad a régi
+            }
+            
+            $stmt_update->bind_param("diiisssssssssssssssssi",
+                $final_price, $qty1, $qty2, $needs_update, $run_timestamp,
+                $variantSkuGroup, $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
                 $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
                 $data[$map['variant barcode'] ?? ''], $data[$map['variant grams'] ?? ''],
                 $data[$map['image src'] ?? ''], $data[$map['image src 2'] ?? ''], $data[$map['image src 3'] ?? ''],
                 $data[$map['option1 name'] ?? ''], $option1Val, $data[$map['option2 name'] ?? ''], $option2Val,
-                $variantSkuGroup
+                $row['id']
             );
             $stmt_update->execute();
             $total_updated++;
 
         } else {
             // === ESET 2: TERMÉK ÚJ NEKÜNK (LASSÚ - API HÍVÁS) ===
-            // (Csak itt hívjuk meg az API-t az "örökbefogadás" ellenőrzéséhez)
-            
-            $shopifyGids = productQueryBySku_graphql($token, $shopurl, $variantSkuGroup);
+            // Örökbefogadás: A 'generated_sku' alapján keressük!
+            $shopifyGids = productQueryBySku_graphql($token, $shopurl, $generated_sku);
 
             if ($shopifyGids === null) {
                 // VADONATÚJ TERMÉK (Shopify-ban sincs)
@@ -139,9 +154,9 @@ foreach ($feeds as $feed) {
             }
 
             $stmt_insert->bind_param("sssssssssiissssssssssssss",
-                $variantSkuGroup, $generated_sku, $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
+                $generated_sku, $variantSkuGroup, $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
                 $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
-                $data[$map['variant price']], $qty, $qty_other,
+                $final_price, $qty1, $qty2,
                 $data[$map['variant barcode'] ?? ''], $data[$map['variant grams'] ?? ''],
                 $data[$map['image src'] ?? ''], $data[$map['image src 2'] ?? ''], $data[$map['image src 3'] ?? ''],
                 $data[$map['option1 name'] ?? ''], $option1Val, $data[$map['option2 name'] ?? ''], $option2Val,
@@ -150,7 +165,6 @@ foreach ($feeds as $feed) {
             $stmt_insert->execute();
         }
 
-        // CHUNK LOGOLÁS
         if ($counter % $chunk_size === 0) {
             echo "Feldolgozva: $counter sor\n";
             gc_collect_cycles();
@@ -159,18 +173,16 @@ foreach ($feeds as $feed) {
     fclose($temp);
 }
 
-// --- ARCHIVÁLÁS ---
+// --- ARCHIVÁLÁS (MOST MÁR HELYESEN FOG MŰKÖDNI) ---
+// Most, hogy 'generated_sku' alapon frissítettük a 'last_seen_in_feed'-et,
+// az "L"-es méret (és a többi árva) 'last_seen_in_feed' bélyege régi marad.
 $archive_sql = "UPDATE shopifyproducts SET needs_update = 20 WHERE last_seen_in_feed < ? AND needs_update NOT IN (2, 10)";
 $stmt_archive = $conn->prepare($archive_sql);
 $stmt_archive->bind_param("s", $run_timestamp);
 $stmt_archive->execute();
-echo "Archiválva: " . $stmt_archive->affected_rows . " termék\n";
+echo "Archiválva (Törlésre előkészítve): " . $stmt_archive->affected_rows . " variáns\n";
 
 echo "<hr><b>Feldolgozva: $total_rows | Új: $total_created | Frissítve: $total_updated | Átvéve: $total_adopted</b>\n";
 echo "<h2>1. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
-
-
-
-
