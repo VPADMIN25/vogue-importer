@@ -17,14 +17,19 @@ $env = [
 ];
 
 $conn = null;
-$maxRetries = 5;
+$maxRetries = 12;
 for ($i = 0; $i < $maxRetries; $i++) {
     $conn = @mysqli_connect($env['DB_HOST'], $env['DB_USER'], $env['DB_PASS'], $env['DB_NAME'], (int)$env['DB_PORT']);
-    if ($conn) break;
-    echo "Kapcsolódás sikertelen... próbálkozás " . ($i + 1) . "\n";
-    sleep(5);
+    if ($conn) {
+        echo "Kapcsolódva: {$env['DB_HOST']} (próbálkozás: " . ($i + 1) . ")\n";
+        break;
+    }
+    echo "Kapcsolódás sikertelen... próbálkozás " . ($i + 1) . "/$maxRetries (15mp várakozás)\n";
+    sleep(15);
 }
-if (!$conn) die("FATAL: MySQL hiba!");
+if (!$conn) {
+    die("FATAL: Nem sikerült kapcsolódni a MySQL-hez 12 próbálkozás után!");
+}
 mysqli_set_charset($conn, "utf8mb4");
 
 // --- SHOPIFY + HELY BETÖLTÉSE ---
@@ -184,3 +189,4 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
