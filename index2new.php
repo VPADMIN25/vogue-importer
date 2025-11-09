@@ -1,13 +1,13 @@
 <?php
-// index2new.php – V20 – CÍM = VENDOR
-ini_set('max_execution_time', 1800);
-set_time_limit(1800);
+// index2new.php – V22 – IDŐKORLÁT + RATE LIMIT + TELJES BIZTONSÁG
+ini_set('max_execution_time', 900);  // 15 perc
+set_time_limit(900);
 ini_set('memory_limit', '2G');
 
 echo "<pre style='font-family:Consolas;font-size:14px'>";
 echo "<h2>2. LÉPÉS – ÚJ TERMÉKEK</h2>";
 
-// --- KAPCSOLAT ---
+// --- KAPCSOLAT (RETRY) ---
 $env = [
     'DB_HOST' => getenv('DB_HOST'),
     'DB_USER' => getenv('DB_USER'),
@@ -27,14 +27,23 @@ for ($i = 0; $i < $maxRetries; $i++) {
 if (!$conn) die("FATAL: MySQL hiba!");
 mysqli_set_charset($conn, "utf8mb4");
 
+// --- SHOPIFY + HELY BETÖLTÉSE ---
 require_once("helpers/shopifyGraphQL.php");
 
 $shopurl = getenv('SHOPIFY_SHOP_URL');
 $token = getenv('SHOPIFY_API_TOKEN');
+if (empty($shopurl) || empty($token)) die("Hiányzó SHOPIFY változók.");
+
 $loc1 = getShopifyLocationGid($token, $shopurl, "Italy Vogue Premiere Warehouse 1");
 $loc2 = getShopifyLocationGid($token, $shopurl, "Italy Vogue Premiere Warehouse 2");
+if (!$loc1 || !$loc2) die("Raktárak hiányoznak!");
 
-// CSAK needs_update=2
+// --- IDŐKORLÁT + RATE LIMIT ---
+$start_time = time();
+$max_runtime = 600;  // 10 perc
+$created_count = 0;
+
+// --- CSAK ÚJAK ---
 $sql = "SELECT DISTINCT variant_sku FROM shopifyproducts WHERE needs_update=2 AND variant_sku!='' AND vendor!=''";
 $groups = $conn->query($sql);
 
@@ -101,9 +110,9 @@ while ($g = $groups->fetch_assoc()) {
     $options = array_values(array_unique(array_filter($options)));
     $tags = array_filter(array_map('trim', explode(',', $titleRow['tags'] ?? '')));
 
-    // TERMÉK LÉTREHOZÁS – CÍM = VENDOR!
+    // TERMÉK LÉTREHOZÁS
     $input = [
-        "title" => $title,  // VENDOR!
+        "title" => $title,
         "handle" => $handle,
         "descriptionHtml" => $titleRow['body'] ?? '',
         "vendor" => $titleRow['vendor'] ?? 'Unknown',
@@ -113,7 +122,10 @@ while ($g = $groups->fetch_assoc()) {
     ];
 
     $resp = productCreate_graphql($token, $shopurl, $input, $images);
-    if (empty($resp['data']['productCreate']['product']['id'])) continue;
+    if (empty($resp['data']['productCreate']['product']['id'])) {
+        echo "HIBA: termék létrehozása sikertelen\n";
+        continue;
+    }
     $pid = $resp['data']['productCreate']['product']['id'];
     $num = substr($pid, strrpos($pid, '/') + 1);
     echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num'>$handle</a><br>";
@@ -152,14 +164,23 @@ while ($g = $groups->fetch_assoc()) {
         $upd->close();
     }
 
-    echo "<b style='color:#0f0;background:#000;padding:8px'>TELJESEN KÉSZ</b><br>";
+    $created_count++;
+    echo "<b style='color:#0f0;background:#000;padding:8px'>TELJESEN KÉSZ – $created_count. termék</b><br>";
+
+    // RATE LIMIT
+    usleep(200000);  // 0.2 mp
+
+    // IDŐKORLÁT
+    if (time() - $start_time > $max_runtime) {
+        echo "IDŐKORLÁT: 10 perc eltelt – $created_count termék létrehozva. Maradék a következő futásra.\n";
+        break;
+    }
 }
 
-echo "<h2>2. LÉPÉS KÉSZ</h2></pre>";
+echo "<h2>2. LÉPÉS KÉSZ – Összesen $created_count új termék</h2></pre>";
 $conn->close();
 
 function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
-
