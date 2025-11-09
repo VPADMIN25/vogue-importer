@@ -37,6 +37,7 @@ $sql = "SELECT * FROM shopifyproducts WHERE needs_update IN (1, 10, 20) AND shop
 $result = $conn->query($sql);
 
 $update_queue = []; $inventory_queue = []; $archive_queue = []; $delete_queue = [];
+$processed_ids = []; // <-- EZ AZ ÚJ SOR
 
 while ($row = $result->fetch_assoc()) {
     $gid = $row['shopifyproductid'];
@@ -58,6 +59,7 @@ while ($row = $result->fetch_assoc()) {
     if ($row['needs_update'] == 20) {
         $archive_queue[] = $gid;
     }
+    $processed_ids[] = $row['id'];
 }
 
 // TÖRLÉS
@@ -81,10 +83,13 @@ foreach ($archive_queue as $gid) {
 }
 
 // needs_update = 0
-$ids = implode(',', array_column($result->fetch_all(MYSQLI_ASSOC), 'id'));
-$conn->query("UPDATE shopifyproducts SET needs_update = 0 WHERE id IN ($ids)");
+if (!empty($processed_ids)) {
+    $ids = implode(',', $processed_ids);
+    $conn->query("UPDATE shopifyproducts SET needs_update = 0 WHERE id IN ($ids)");
+}
 
 echo "<h2>3. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
 
