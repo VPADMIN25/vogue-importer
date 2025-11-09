@@ -1,11 +1,11 @@
 <?php
-// indexnew.php – V23 – VÉGLEGES (A "HIBÁS ÖRÖKBEFOGADÁS" JAVÍTÁSA)
+// indexnew.php – V24 – VÉGLEGES (A "HIBÁS NAGYBETŰS ÖRÖKBEFOGADÁS" JAVÍTÁSA)
 ini_set('max_execution_time', 1800);  // 30 perc
 set_time_limit(1800);
 ini_set('memory_limit', '2G');
 
 echo "<pre style='font-family:Consolas;font-size:14px'>";
-echo "<h2>1. LÉPÉS – BEOLVASÁS + SZINKRONIZÁLÁS (V23 - Hibatűrő Örökbefogadás)</h2>";
+echo "<h2>1. LÉPÉS – BEOLVASÁS + SZINKRONIZÁLÁS (V24 - "Trilingual" Örökbefogadás)</h2>";
 
 // --- KAPCSOLAT (RETRY) ---
 $env = [
@@ -52,6 +52,7 @@ $feeds = [
     ['url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv', 'location' => 2, 'qty_col' => 'Peppela Inventory Qty'],
 ];
 
+// Két SKU-t keresünk (a régit ÉS az újat)
 $stmt_check = $conn->prepare("SELECT id, needs_update, qty_location_1, qty_location_2, price_huf FROM shopifyproducts WHERE generated_sku = ? OR variant_sku = ?");
 $stmt_update = $conn->prepare("UPDATE shopifyproducts SET price_huf=?, qty_location_1=?, qty_location_2=?, needs_update=?, last_seen_in_feed=?, variant_sku=?, generated_sku=?, handle=?, title=?, body=?, vendor=?, type=?, tags=?, barcode=?, grams=?, img_src=?, img_src_2=?, img_src_3=?, option1_name=?, option1_value=?, option2_name=?, option2_value=? WHERE id=?");
 $stmt_insert = $conn->prepare("INSERT INTO shopifyproducts (generated_sku, variant_sku, handle, title, body, vendor, type, tags, price_huf, qty_location_1, qty_location_2, barcode, grams, img_src, img_src_2, img_src_3, option1_name, option1_value, option2_name, option2_value, needs_update, last_seen_in_feed, shopifyproductid, shopifyvariantid, shopifyinventoryid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -80,17 +81,27 @@ foreach ($feeds as $feed) {
         $option1Val = trim($data[$map['option1 value'] ?? ''] ?? '');
         $option2Val = trim($data[$map['option2 value'] ?? ''] ?? '');
         
+        // --- A 3 KULCS GENERÁLÁSA ---
+        // 1. A HELYES, KISBETŰS KULCS (A JÖVŐ)
         $generated_sku = $variantSkuGroup;
         if ($option1Val) $generated_sku .= "-" . preg_replace('/[^a-z0-9]+/', '-', strtolower($option1Val));
         if ($option2Val) $generated_sku .= "-" . preg_replace('/[^a-z0-9]+/', '-', strtolower($option2Val));
+        
+        // 2. A RÉGI, NAGYBETŰS SYNCX KULCS (A TE ESETED)
+        $old_syncx_sku = $variantSkuGroup;
+        if ($option1Val) $old_syncx_sku .= "-" . $option1Val;
+        if ($option2Val) $old_syncx_sku .= "-" . $option2Val;
+        
+        // 3. A RÉGI, CSOPORT KULCS (A "Norway 1963" esete)
+        // (Ez maga a $variantSkuGroup)
 
         $csv_price = (float)($data[$map['variant price']] ?? 0);
-        $final_price = $csv_price; // Nincs árrés, ahogy kérted (73239 -> 73239)
+        $final_price = $csv_price; 
         
         $qty1 = ($feed['location'] == 1) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
         $qty2 = ($feed['location'] == 2) ? (int)$data[strtolower($feed['qty_col'])] : 0;
 
-        // === VÉGLEGES LOGIKA (A HIBÁS ADAT KEZELÉSE) ===
+        // A HIBÁS ADAT KEZELÉSE
         $stmt_check->bind_param("ss", $generated_sku, $variantSkuGroup);
         $stmt_check->execute();
         $res = $stmt_check->get_result();
@@ -104,14 +115,14 @@ foreach ($feeds as $feed) {
             if ($feed['location'] == 1) { $qty2 = $row['qty_location_2']; } else { $qty1 = $row['qty_location_1']; }
 
             if ($row['price_huf'] != $final_price || $row['qty_location_1'] != $qty1 || $row['qty_location_2'] != $qty2 || $row['needs_update'] == 20) {
-                $needs_update = 10; // 10 = Frissítés (és "Öngyógyítás")
+                $needs_update = 10;
             } else {
                 $needs_update = $row['needs_update'];
             }
             
             $stmt_update->bind_param("diiissssssssssssssssssi",
                 $final_price, $qty1, $qty2, $needs_update, $run_timestamp,
-                $variantSkuGroup, $generated_sku, // Itt javítjuk a generated_sku-t!
+                $variantSkuGroup, $generated_sku, 
                 $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
                 $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
                 $data[$map['variant barcode'] ?? ''], $data[$map['variant grams'] ?? ''],
@@ -124,14 +135,17 @@ foreach ($feeds as $feed) {
 
         } else {
             // === ESET 2: TERMÉK ÚJ NEKÜNK (A TE ESETED) ===
-            // Nincs a helyi DB-ben. Most megnézzük a Shopify-t.
             
-            // === JAVÍTÁS: Először a HELYES (generated_sku) alapján keressük ===
+            // 1. Próba: Helyes, kisbetűs SKU
             $shopifyGids = productQueryBySku_graphql($token, $shopurl, $generated_sku);
 
+            // 2. Próba: Régi, nagybetűs SKU (A TE CHC...-M-BROWN ESETED)
             if ($shopifyGids === null) {
-                // === JAVÍTÁS: Ha nem sikerült, megpróbáljuk a RÉGI, HIBÁS (variant_sku) alapján is! ===
-                // Ez fogja megtalálni a "Norway 1963"-at a hibás SKU-ja alapján.
+                $shopifyGids = productQueryBySku_graphql($token, $shopurl, $old_syncx_sku);
+            }
+            
+            // 3. Próba: Régi, csoport SKU (A "Norway 1963" esete)
+            if ($shopifyGids === null) {
                 $shopifyGids = productQueryBySku_graphql($token, $shopurl, $variantSkuGroup);
             }
 
