@@ -69,6 +69,7 @@ foreach ($delete_queue as $gid) {
 // FRISSÍTÉS
 foreach ($update_queue as $gid => $variants) {
     productVariantsBulkUpdate_graphql($token, $shopurl, $gid, $variants);
+    productUpdateStatus_graphql($token, $shopurl, $gid, 'ACTIVE');
 }
 foreach (array_chunk($inventory_queue, 100) as $chunk) {
     inventorySetQuantities_graphql($token, $shopurl, $chunk);
@@ -86,3 +87,4 @@ $conn->query("UPDATE shopifyproducts SET needs_update = 0 WHERE id IN ($ids)");
 echo "<h2>3. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
