@@ -88,20 +88,6 @@ foreach ($feeds as $feed) {
         if ($option2Val) $generated_sku .= "-" . preg_replace('/[^a-z0-9]+/', '-', strtolower($option2Val));
 
         // VARIANT_SKU ELLENŐRZÉS (CSOPORT!)
-        $shopifyGids = productQueryBySku_graphql($token, $shopurl, $variantSkuGroup);
-        $needs_update = 0; $gid_product = $gid_variant = $gid_inventory = null;
-
-        if ($shopifyGids === null) {
-            $needs_update = 2;
-            $total_created++;
-        } else {
-            $needs_update = 10;
-            $gid_product = $shopifyGids['product_gid'];
-            $gid_variant = $shopifyGids['variant_gid'];
-            $gid_inventory = $shopifyGids['inventory_gid'];
-            $total_adopted++;
-        }
-
         $qty = ($feed['location'] == 1) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
         $qty_other = ($feed['location'] == 2) ? $qty : 0;
 
@@ -109,11 +95,17 @@ foreach ($feeds as $feed) {
         $stmt_check->execute();
         $res = $stmt_check->get_result();
 
+        $needs_update = 0; $gid_product = $gid_variant = $gid_inventory = null;
+
         if ($res->num_rows > 0) {
+            // === ESET 1: TERMÉK MÁR ISMERJÜK (GYORS) ===
+            // (Itt már nem hívunk API-t, csak frissítünk)
             $row = $res->fetch_assoc();
-            $needs_update = max($needs_update, $row['needs_update'] == 20 ? 10 : $row['needs_update']);
-            $qty1 = ($feed['location'] == 1) ? $qty : $row['qty_location_1'];
-            $qty2 = ($feed['location'] == 2) ? $qty : $row['qty_location_2'];
+            $needs_update = max(10, $row['needs_update'] == 20 ? 10 : $row['needs_update']); // 10-es zászló (frissítés), ha látjuk
+            
+            // Itt kell a javítás, amit korábban beszéltünk
+            $qty1 = ($feed['location'] == 1) ? $qty : ($row['qty_location_1'] ?? 0);
+            $qty2 = ($feed['location'] == 2) ? $qty : ($row['qty_location_2'] ?? 0);
 
             $stmt_update->bind_param("diiisssssssssssssssss",
                 $data[$map['variant price']], $qty1, $qty2, $needs_update, $run_timestamp,
@@ -126,7 +118,26 @@ foreach ($feeds as $feed) {
             );
             $stmt_update->execute();
             $total_updated++;
+
         } else {
+            // === ESET 2: TERMÉK ÚJ NEKÜNK (LASSÚ - API HÍVÁS) ===
+            // (Csak itt hívjuk meg az API-t az "örökbefogadás" ellenőrzéséhez)
+            
+            $shopifyGids = productQueryBySku_graphql($token, $shopurl, $variantSkuGroup);
+
+            if ($shopifyGids === null) {
+                // VADONATÚJ TERMÉK (Shopify-ban sincs)
+                $needs_update = 2; // 2 = Létrehozás
+                $total_created++;
+            } else {
+                // ÖRÖKBEFOGADOTT TERMÉK (Shopify-ban már létezik)
+                $needs_update = 10; // 10 = Frissítés
+                $gid_product = $shopifyGids['product_gid'];
+                $gid_variant = $shopifyGids['variant_gid'];
+                $gid_inventory = $shopifyGids['inventory_gid'];
+                $total_adopted++;
+            }
+
             $stmt_insert->bind_param("sssssssssiissssssssssssss",
                 $variantSkuGroup, $generated_sku, $data[$map['handle']], $data[$map['vendor']], $data[$map['body (html)'] ?? ''],
                 $data[$map['vendor']], $data[$map['type']], $data[$map['tags']],
@@ -159,6 +170,7 @@ echo "<hr><b>Feldolgozva: $total_rows | Új: $total_created | Frissítve: $total
 echo "<h2>1. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
 
 
 
