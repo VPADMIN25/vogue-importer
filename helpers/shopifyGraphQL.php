@@ -136,4 +136,34 @@ GRAPHQL;
 function productActivate_graphql($token, $shopurl, $productId) {
     productUpdateStatus_graphql($token, $shopurl, $productId, 'ACTIVE');
 }
+
+// ... (a fájl többi része) ...
+// ÚJ FÜGGVÉNY a V24-hez
+function productVariantFullUpdate_graphql($token, $shopurl, $input) {
+    $q = <<<'GRAPHQL'
+mutation($input:ProductVariantInput!){
+  productVariantUpdate(input:$input){
+    productVariant{id sku}
+    userErrors{field message}
+  }
+}
+GRAPHQL;
+    return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
+}
+
+// ÚJ FÜGGVÉNY a V24-hez
+function productVariantDelete_graphql($token, $shopurl, $variantId) {
+    $q = <<<'GRAPHQL'
+mutation($id:ID!){
+  productVariantDelete(id:$id){
+    deletedProductVariantId
+    userErrors{field message}
+  }
+}
+GRAPHQL;
+    return send_graphql_request($token, $shopurl, $q, ['id' => $variantId]);
+}
+
+
 ?>
+
