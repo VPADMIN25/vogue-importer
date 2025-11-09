@@ -55,7 +55,7 @@ $feeds = [
     ['url' => 'https://voguepremiere-csv-storage.fra1.digitaloceanspaces.com/peppela_final_feed_huf.csv', 'location' => 2, 'qty_col' => 'Peppela Inventory Qty'],
 ];
 
-$stmt_check = $conn->prepare("SELECT id, needs_update FROM shopifyproducts WHERE variant_sku = ?");
+$stmt_check = $conn->prepare("SELECT id, needs_update, qty_location_1, qty_location_2 FROM shopifyproducts WHERE variant_sku = ?");
 $stmt_update = $conn->prepare("UPDATE shopifyproducts SET price_huf=?, qty_location_1=?, qty_location_2=?, needs_update=?, last_seen_in_feed=?, handle=?, title=?, body=?, vendor=?, type=?, tags=?, barcode=?, grams=?, img_src=?, img_src_2=?, img_src_3=?, option1_name=?, option1_value=?, option2_name=?, option2_value=? WHERE variant_sku=?");
 $stmt_insert = $conn->prepare("INSERT INTO shopifyproducts (variant_sku, generated_sku, handle, title, body, vendor, type, tags, price_huf, qty_location_1, qty_location_2, barcode, grams, img_src, img_src_2, img_src_3, option1_name, option1_value, option2_name, option2_value, needs_update, last_seen_in_feed, shopifyproductid, shopifyvariantid, shopifyinventoryid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
@@ -159,5 +159,6 @@ echo "<hr><b>Feldolgozva: $total_rows | Új: $total_created | Frissítve: $total
 echo "<h2>1. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
 
 
