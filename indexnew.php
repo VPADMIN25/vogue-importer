@@ -95,7 +95,7 @@ foreach ($feeds as $feed) {
         $final_price = $csv_price; 
         
         $qty1 = ($feed['location'] == 1) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
-        $qty2 = ($feed['location'] == 2) ? (int)$data[strtolower($feed['qty_col'])] : 0;
+        $qty2 = ($feed['location'] == 2) ? (int)$data[$map[strtolower($feed['qty_col'])]] : 0;
 
         // === JAVÍTÁS: MÁR CSAK A HELYES, KISBETŰS 'generated_sku' ALAPJÁN KERESÜNK ===
         $stmt_check->bind_param("s", $generated_sku);
@@ -189,3 +189,4 @@ echo "<hr><b>Feldolgozva: $total_rows | Új: $total_created | Frissítve: $total
 echo "<h2>1. LÉPÉS KÉSZ</h2></pre>";
 $conn->close();
 ?>
+
