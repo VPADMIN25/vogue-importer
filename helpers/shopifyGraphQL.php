@@ -64,17 +64,24 @@ GRAPHQL;
     return send_graphql_request($token, $shopurl, $q, ['input' => $input, 'media' => $media]);
 }
 
-// 2. JAVÍTÁS: Opciók hozzáadása a helyes (nem "input:"-ba ágyazott) módon
+// CSERÉLD LE ERRE A TELJES FÜGGVÉNYRE:
 function productAddOptions_graphql($token, $shopurl, $productId, $options) {
     $q = <<<'GRAPHQL'
-mutation($id:ID!,$options:[String!]!){
-  productUpdate(id:$id, options:$options){
-    product{id}
-    userErrors{field message}
+mutation($input: ProductInput!) {
+  productUpdate(input: $input) {
+    product { id options { name } }
+    userErrors { field message }
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, ['id' => $productId, 'options' => $options]);
+
+    // A HELYES formátum: egy 'input' objektumba csomagolva
+    $input = [
+        'id' => $productId,
+        'options' => $options
+    ];
+
+    return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
 }
 
 // 3. JAVÍTÁS: A mutációnak a helyes, "becsomagolt" típust kell várnia
@@ -167,3 +174,4 @@ GRAPHQL;
 }
 
 ?>
+
