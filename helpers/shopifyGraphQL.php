@@ -50,18 +50,23 @@ GRAPHQL;
     ] : null;
 }
 
-function productCreate_graphql($token, $shopurl, $input, $media = []) {
+// CSERÉLD LE ERRE A TELJES FÜGGVÉNYRE:
+function productCreate_graphql($token, $shopurl, $input, $media = [], $productOptions = []) {
     $q = <<<'GRAPHQL'
-mutation($input:ProductInput!,$media:[CreateMediaInput!]){
-  productCreate(input:$input,media:$media){
-    product{id title handle status}
-    userErrors{field message}
+mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [ProductOptionInput!]) {
+  productCreate(input: $input, media: $media, productOptions: $options) {
+    product { id title handle status }
+    userErrors { field message }
   }
 }
 GRAPHQL;
-    // Fontos: Ezt a függvényt tisztán hagyjuk (opciók nélkül),
-    // hogy a "HANDLE NEM TALÁLHATÓ" hibát végleg elkerüljük.
-    return send_graphql_request($token, $shopurl, $q, ['input' => $input, 'media' => $media]);
+
+    // A GQL-ben $options-nak nevezett változónak a PHP $productOptions tömböt adjuk át
+    return send_graphql_request($token, $shopurl, $q, [
+        'input' => $input, 
+        'media' => $media,
+        'options' => $productOptions // A 2024-04 API-hoz szükséges új változó
+    ]);
 }
 
 // CSERÉLD LE ERRE A TELJES FÜGGVÉNYRE:
@@ -174,4 +179,5 @@ GRAPHQL;
 }
 
 ?>
+
 
