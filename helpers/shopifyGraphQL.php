@@ -209,6 +209,25 @@ GRAPHQL;
     return empty($r['data']['products']['nodes']);
 }
 
+function getProductVariants_graphql($token, $shopurl, $productId) {
+    $q = <<<'GRAPHQL'
+query($id: ID!) {
+  product(id: $id) {
+    variants(first: 250) {
+      nodes {
+        id
+        sku
+        inventoryItem { id }
+      }
+    }
+  }
+}
+GRAPHQL;
+    return send_graphql_request($token, $shopurl, $q, ['id' => $productId]);
+}
+
+
 ?>
+
 
 
