@@ -139,6 +139,11 @@ while ($g = $groups->fetch_assoc()) {
 
     $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
+    // ÚJ FORMÁTUM a 2024-04 API-hoz:
+    $productOptions = [];
+    foreach ($options as $optName) {
+        $productOptions[] = ['name' => $optName];
+    }
     $tags = array_filter(array_map('trim', explode(',', $titleRow['tags'] ?? '')));
 
     echo "Variánsok száma: " . count($variants) . "<br>";
@@ -281,6 +286,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
