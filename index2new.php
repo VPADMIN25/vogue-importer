@@ -154,7 +154,7 @@ while ($g = $groups->fetch_assoc()) {
         "status" => "DRAFT"
     ];
 
-    $resp = productCreate_graphql($token, $shopurl, $input, $images, $options);
+    $resp = productCreate_graphql($token, $shopurl, $input, $images);
     if (empty($resp['data']['productCreate']['product']['id'])) {
         echo "HIBA: termék létrehozása sikertelen!<br>";
         echo "<pre>" . print_r($resp, true) . "</pre>";
@@ -165,7 +165,7 @@ while ($g = $groups->fetch_assoc()) {
     echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
 
     // --- OPCIÓK HOZZÁADÁSA ---
-    /*
+    
     if ($options) {
         $resp_opt = productReplaceOptions_graphql($token, $shopurl, $pid, $options);
         if (!empty($resp_opt['data']['productUpdate']['product']['id'])) {
@@ -174,7 +174,7 @@ while ($g = $groups->fetch_assoc()) {
             echo "HIBA (opciók): " . print_r($resp_opt, true) . "<br>";
         }
     }
-    */
+    
 
     // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA ---
     $varInputs = array_map(fn($v) => [
@@ -264,6 +264,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
