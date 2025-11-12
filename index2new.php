@@ -184,10 +184,12 @@ while ($g = $groups->fetch_assoc()) {
     // A variánsokat be kell csomagolni egy "variantInput" kulcs alá,
     // hogy megfeleljenek a [ProductVariantsBulkInput!] típusnak.
 // EZ A JAVÍTOTT KÓD:
+// JAVÍTOTT KÓD (index2new.php ~188. sor):
     $varInputs = array_map(fn($v) => [
-        'variantInput' => array_filter([  // <<<--- ITT A HIÁNYZÓ CSOMAGOLÁS
+        'variantInput' => array_filter([
             "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
-            "requiresShipping" => $v['requiresShipping'], "inventoryManagement" => $v['management'],
+            "requiresShipping" => $v['requiresShipping'],
+            "inventoryManagement" => $v['inventoryManagement'], // <<<--- ÍGY HELYES
             "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
             "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
         ], fn($val) => $val !== null)
@@ -279,6 +281,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
