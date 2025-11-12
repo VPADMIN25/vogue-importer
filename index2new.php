@@ -1,5 +1,5 @@
 <?php
-// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ
+// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ (warningok fix, debug echo-k)
 
 ini_set('max_execution_time', 900);  // 15 perc
 set_time_limit(900);
@@ -35,11 +35,13 @@ mysqli_set_charset($conn, "utf8mb4");
 require_once("helpers/shopifyGraphQL.php");
 $shopurl = getenv('SHOPIFY_SHOP_URL');
 $token = getenv('SHOPIFY_API_TOKEN');
-if (empty($shopurl) || empty($token)) die("Hiányzó SHOPIFY változók.");
+if (empty($shopurl) || empty($token)) die("Hiányzó SHOPIFY változó: shopurl vagy token üres!");
+
+echo "Shopify URL: $shopurl | Token: " . (empty($token) ? 'ÜRES!' : 'OK') . "\n";
 
 $loc1 = getShopifyLocationGid($token, $shopurl, "Italy Vogue Premiere Warehouse 1");
 $loc2 = getShopifyLocationGid($token, $shopurl, "Italy Vogue Premiere Warehouse 2");
-if (!$loc1 || !$loc2) die("Raktárak hiányoznak!");
+if (!$loc1 || !$loc2) die("Raktárak hiányoznak! loc1: $loc1, loc2: $loc2");
 
 // --- IDŐKORLÁT ---
 $start_time = time();
@@ -61,6 +63,7 @@ echo "Új termékcsoportok száma: " . $groups->num_rows . "\n";
 
 while ($g = $groups->fetch_assoc()) {
     $sku_group = $g['variant_sku'];
+    echo "Feldolgozás: SKU csoport - $sku_group\n";
     $group_sql = "SELECT * FROM shopifyproducts WHERE variant_sku = '$sku_group' AND needs_update=2";
     $group = $conn->query($group_sql);
 
@@ -71,53 +74,52 @@ while ($g = $groups->fetch_assoc()) {
     $group->data_seek(0); // Reset
 
     $input = [
-        'title' => $first['title'],
-        'bodyHtml' => $first['body_html'],
-        'vendor' => $first['vendor'],
-        'productType' => $first['type'],
-        'tags' => explode(',', $first['tags']),
+        'title' => $first['title'] ?? '',
+        'bodyHtml' => $first['body_html'] ?? '',
+        'vendor' => $first['vendor'] ?? '',
+        'productType' => $first['type'] ?? '',
+        'tags' => explode(',', $first['tags'] ?? ''),
         'status' => 'DRAFT'
     ];
 
-    $handle_base = sanitize_handle($first['handle'] ?: $first['title']);
+    $handle_base = sanitize_handle($first['handle'] ?? $first['title'] ?? 'product');
     $handle = $handle_base;
-    $media = array_map(fn($url) => ['originalSource' => $url, 'mediaContentType' => 'IMAGE'], array_filter([$first['image1'], $first['image2'], $first['image3']]));
+    $media = array_map(fn($url) => ['originalSource' => $url, 'mediaContentType' => 'IMAGE'], array_filter([
+        $first['image1'] ?? '',
+        $first['image2'] ?? '',
+        $first['image3'] ?? ''
+    ]));
 
-    // --- VARIÁNSOK + OPCIÓK (javított: trim és empty skip) ---
+    // --- VARIÁNSOK + OPCIÓK (javított: ?? defaultok) ---
     $variants = [];
-    $images = [];
     $option1_values = [];
     $option2_values = [];
 
     while ($row = $group->fetch_assoc()) {
         $variants[] = [
-            'sku' => $row['generated_sku'],
-            'price' => number_format($row['price_huf'] / 100, 2, '.', ''),
-            'barcode' => $row['variant_barcode'],
-            'weight' => (float)$row['variant_grams'],
+            'sku' => $row['generated_sku'] ?? '',
+            'price' => number_format(($row['price_huf'] ?? 0) / 100, 2, '.', ''),
+            'barcode' => $row['variant_barcode'] ?? '',
+            'weight' => (float)($row['variant_grams'] ?? 0),
             'weightUnit' => 'GRAMS',
             'taxable' => true,
             'requiresShipping' => true,
-            'option1' => trim($row['option1_value']),
-            'option2' => trim($row['option2_value']),
-            'qty1' => $row['qty1'],
-            'qty2' => $row['qty2'],
+            'option1' => trim($row['option1_value'] ?? ''),
+            'option2' => trim($row['option2_value'] ?? ''),
+            'qty1' => $row['qty1'] ?? 0,
+            'qty2' => $row['qty2'] ?? 0,
         ];
 
-        if ($row['image1']) $images[] = $row['image1'];
-        if ($row['image2']) $images[] = $row['image2'];
-        if ($row['image3']) $images[] = $row['image3'];
-
-        if (trim($row['option1_value']) !== '') $option1_values[] = trim($row['option1_value']);
-        if (trim($row['option2_value']) !== '') $option2_values[] = trim($row['option2_value']);
+        if (trim($row['option1_value'] ?? '') !== '') $option1_values[] = trim($row['option1_value']);
+        if (trim($row['option2_value'] ?? '') !== '') $option2_values[] = trim($row['option2_value']);
     }
 
     $option1 = array_unique(array_filter($option1_values));
     $option2 = array_unique(array_filter($option2_values));
 
     $productOptions = [];
-    if (count($option1) > 0) $productOptions[] = ['name' => $first['option1_name'] ?: 'Size', 'values' => $option1];
-    if (count($option2) > 0) $productOptions[] = ['name' => $first['option2_name'] ?: 'Color', 'values' => $option2];
+    if (count($option1) > 0) $productOptions[] = ['name' => $first['option1_name'] ?? 'Size', 'values' => $option1];
+    if (count($option2) > 0) $productOptions[] = ['name' => $first['option2_name'] ?? 'Color', 'values' => $option2];
 
     // --- TERMÉK LÉTREHOZÁS (új modell: opciók nélkül) ---
     $pid = null;
@@ -125,6 +127,7 @@ while ($g = $groups->fetch_assoc()) {
     $retry = 0;
     while ($retry < 50 && !$pid) {
         $input['handle'] = $handle;
+        echo "Termék létrehozási kísérlet (handle: $handle)...\n";
         $resp = productCreate_graphql($token, $shopurl, $input, $media);
 
         if (!empty($resp['data']['productCreate']['userErrors'])) {
@@ -151,10 +154,10 @@ while ($g = $groups->fetch_assoc()) {
 
     // --- OPCIÓK HOZZÁADÁSA (új modell) ---
     if (!empty($productOptions)) {
+        echo "Opciók hozzáadása...\n";
         $resp_options = productOptionsCreate_graphql($token, $shopurl, $pid, $productOptions);
         if (!empty($resp_options['data']['productOptionsCreate']['userErrors'])) {
             echo "HIBA (opciók hozzáadása): " . print_r($resp_options, true) . "<br>";
-            // Opcionálisan: Töröld a terméket ha hiba
             continue;
         } else {
             echo "OPCIÓK HOZZÁADVA (" . count($productOptions) . " opció)<br>";
@@ -162,6 +165,7 @@ while ($g = $groups->fetch_assoc()) {
     }
 
     // --- VARIÁNSOK HOZZÁADÁSA ---
+    echo "Variánsok hozzáadása...\n";
     $resp_var = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $variants);
     if (!empty($resp_var['data']['productVariantsBulkCreate']['userErrors'])) {
         echo "HIBA (variánsok): " . print_r($resp_var, true) . "<br>";
@@ -175,12 +179,13 @@ while ($g = $groups->fetch_assoc()) {
     $qtySets = [];
     foreach ($created as $v) {
         $invId = $v['inventoryItem']['id'];
-        $var_data = array_filter($variants, fn($var) => $var['sku'] === $v['sku'])[0];
+        $var_data = current(array_filter($variants, fn($var) => $var['sku'] === $v['sku']));
         if ($var_data['qty1'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc1, "availableQuantity" => $var_data['qty1']];
         if ($var_data['qty2'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc2, "availableQuantity" => $var_data['qty2']];
     }
 
     if ($qtySets) {
+        echo "Készlet beállítás...\n";
         foreach (array_chunk($qtySets, 100) as $chunk) {
             $resp_qty = inventorySetQuantities_graphql($token, $shopurl, $chunk);
             if (!empty($resp_qty['data']['inventorySetQuantities']['userErrors'])) {
@@ -192,9 +197,12 @@ while ($g = $groups->fetch_assoc()) {
     }
 
     // --- AKTIVÁLÁS ---
+    echo "Termék aktiválás...\n";
     $resp_act = productActivate_graphql($token, $shopurl, $pid);
-    if (!empty($resp_act['data']['productUpdate']['product']['status'])) {
+    if (!empty($resp_act['data']['productPublish']['product']['status'])) {  // Javítva productPublish-re
         echo "TERMÉK AKTIVÁLVA<br>";
+    } else {
+        echo "HIBA (aktiválás): " . print_r($resp_act, true) . "<br>";
     }
 
     // --- DB FRISSÍTÉS (GID-ek) ---
@@ -203,6 +211,8 @@ while ($g = $groups->fetch_assoc()) {
         $upd->bind_param("ssss", $pid, $cv['id'], $cv['inventoryItem']['id'], $cv['sku']);
         if ($upd->execute()) {
             echo "DB FRISSÍTVE: {$cv['sku']}<br>";
+        } else {
+            echo "DB HIBA: " . $upd->error . "<br>";
         }
         $upd->close();
     }
