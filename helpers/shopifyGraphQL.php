@@ -13,7 +13,7 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
         $data['variables'] = $variables;
     }
 
-    $ch = curl_init("https://$shopurl/admin/api/2024-10/graphql.json");
+    $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => false,
@@ -124,7 +124,7 @@ GRAPHQL;
 // ---------------------------
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
-mutation($productId: ID!, $variants: [ProductVariantInput!]!) {
+mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
   productVariantsBulkCreate(productId: $productId, variants: $variants) {
     productVariants {
       id
@@ -285,3 +285,4 @@ function setVariantInventory_graphql($token, $shopurl, $inventoryItemId, $locati
 }
 
 ?>
+
