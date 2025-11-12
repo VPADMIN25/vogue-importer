@@ -215,6 +215,7 @@ while ($g = $groups->fetch_assoc()) {
 
 
         // Súly
+        /*
         if ($v['weight'] > 0) {
             $mutation = "mutation { inventoryItemUpdate(id: \"$invId\", input: { weight: { value: {$v['weight']}, unit: KILOGRAMS } }) { inventoryItem { id } } }";
             $resp_weight = send_graphql_request($token, $shopurl, $mutation);
@@ -222,7 +223,7 @@ while ($g = $groups->fetch_assoc()) {
                 echo "SÚLY BEÁLLÍTVA: {$v['sku']}<br>";
             }
         }
-
+        */
         // Készlet
         if ($v['qty1'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc1, "availableQuantity" => $v['qty1']];
         if ($v['qty2'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc2, "availableQuantity" => $v['qty2']];
@@ -276,5 +277,6 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
