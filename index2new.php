@@ -153,6 +153,7 @@ while ($g = $groups->fetch_assoc()) {
         "vendor" => $titleRow['vendor'] ?? 'Unknown',
         "productType" => $titleRow['type'] ?? 'Clothing',
         "tags" => $tags,
+        "options" => $options,
         "status" => "DRAFT"
     ];
 
@@ -168,6 +169,7 @@ while ($g = $groups->fetch_assoc()) {
     echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
 
     // --- OPCIÓK HOZZÁADÁSA (Külön lépésben) ---
+    /*
     if ($options) {
         // A JAVÍTOTT productAddOptions_graphql hívása
         $resp_opt = productAddOptions_graphql($token, $shopurl, $pid, $options); 
@@ -177,7 +179,7 @@ while ($g = $groups->fetch_assoc()) {
             echo "HIBA (opciók): " . print_r($resp_opt, true) . "<br>";
         }
     }
-
+    */
     // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (4. JAVÍTÁS: Csomagolás) ---
     // A variánsokat be kell csomagolni egy "variantInput" kulcs alá,
     // hogy megfeleljenek a [ProductVariantsBulkInput!] típusnak.
@@ -277,6 +279,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
