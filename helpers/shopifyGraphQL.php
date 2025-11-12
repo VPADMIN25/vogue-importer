@@ -75,10 +75,10 @@ GRAPHQL;
 }
 
 // Új: OPCIÓK hozzáadása külön mutációval (új modell)
-function productOptionsCreate_graphql($token, $shopurl, $productId, $options) {
+function productOptionsCreate_graphql($token, $shopurl, $productId, $options, $variantStrategy = 'LEAVE_AS_IS') {
     $q = <<<'GRAPHQL'
-mutation($input: ProductOptionsCreateInput!) {
-  productOptionsCreate(input: $input) {
+mutation($productId: ID!, $options: [OptionCreateInput!]!, $variantStrategy: ProductOptionCreateVariantStrategy) {
+  productOptionsCreate(productId: $productId, options: $options, variantStrategy: $variantStrategy) {
     productOptions {
       id
       name
@@ -91,12 +91,14 @@ mutation($input: ProductOptionsCreateInput!) {
   }
 }
 GRAPHQL;
-    $input = [
+    $variables = [
         'productId' => $productId,
-        'options' => $options  // Array of ['name' => 'OptionName', 'values' => ['Value1', 'Value2', ...]]
+        'options' => $options  // Pl. [['name' => 'Size', 'values' => ['S', 'M', 'L']]]
     ];
-    // Optionally add 'variantStrategy' if needed, e.g., 'variantStrategy' => 'CREATE' or 'LEAVE_AS_IS'
-    return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
+    if ($variantStrategy !== 'LEAVE_AS_IS') {
+        $variables['variantStrategy'] = $variantStrategy;  // Pl. 'CREATE' ha új variánsokat akarsz generálni
+    }
+    return send_graphql_request($token, $shopurl, $q, $variables);
 }
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
@@ -228,6 +230,7 @@ GRAPHQL;
 
 
 ?>
+
 
 
 
