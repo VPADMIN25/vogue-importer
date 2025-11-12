@@ -79,10 +79,12 @@ function productOptionsCreate_graphql($token, $shopurl, $productId, $options, $v
     $q = <<<'GRAPHQL'
 mutation($productId: ID!, $options: [OptionCreateInput!]!, $variantStrategy: ProductOptionCreateVariantStrategy) {
   productOptionsCreate(productId: $productId, options: $options, variantStrategy: $variantStrategy) {
-    productOptions {
-      id
-      name
-      values
+    product {
+      options {
+        id
+        name
+        values
+      }
     }
     userErrors {
       field
@@ -93,13 +95,15 @@ mutation($productId: ID!, $options: [OptionCreateInput!]!, $variantStrategy: Pro
 GRAPHQL;
     $variables = [
         'productId' => $productId,
-        'options' => $options  // Pl. [['name' => 'Size', 'values' => ['S', 'M', 'L']]]
+        'options' => $options  // e.g., [['name' => 'Size', 'values' => ['S', 'M']]]
     ];
     if ($variantStrategy !== 'LEAVE_AS_IS') {
-        $variables['variantStrategy'] = $variantStrategy;  // Pl. 'CREATE' ha új variánsokat akarsz generálni
+        $variables['variantStrategy'] = $variantStrategy;  // 'CREATE' for auto-variants
     }
     return send_graphql_request($token, $shopurl, $q, $variables);
 }
+
+
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
 mutation($id:ID!,$variants:[ProductVariantInput!]!){
@@ -230,6 +234,7 @@ GRAPHQL;
 
 
 ?>
+
 
 
 
