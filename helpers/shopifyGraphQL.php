@@ -106,7 +106,7 @@ GRAPHQL;
 
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
-mutation($id:ID!,$variants:[ProductVariantInput!]!){
+mutation($id:ID!,$variants:[ProductVariantsBulkInput!]!){
   productVariantsBulkCreate(productId:$id,variants:$variants){
     productVariants{id sku inventoryItem{id}}
     userErrors{field message}
@@ -234,6 +234,7 @@ GRAPHQL;
 
 
 ?>
+
 
 
 
