@@ -8,7 +8,7 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     $data = ['query' => $query];
     if (!empty($variables)) $data['variables'] = $variables;
 
-    $ch = curl_init("https://$shopurl/admin/api/2025-10/graphql.json");
+    $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => false,
@@ -166,4 +166,5 @@ GRAPHQL;
 
 
 ?>
+
 
