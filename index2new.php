@@ -60,190 +60,124 @@ if (!$groups || $groups->num_rows == 0) {
 echo "Új termékcsoportok száma: " . $groups->num_rows . "\n";
 
 while ($g = $groups->fetch_assoc()) {
-    $skuGroup = $g['variant_sku'];
-    echo "\n<hr><b>TERMÉKCSOPORT: $skuGroup</b><br>";
+    $sku_group = $g['variant_sku'];
+    $group_sql = "SELECT * FROM shopifyproducts WHERE variant_sku = '$sku_group' AND needs_update=2";
+    $group = $conn->query($group_sql);
 
-    $stmt = $conn->prepare("SELECT * FROM shopifyproducts WHERE variant_sku=? AND needs_update=2");
-    $stmt->bind_param("s", $skuGroup);
-    $stmt->execute();
-    $res = $stmt->get_result();
+    if (!$group || $group->num_rows == 0) continue;
 
-    if ($res->num_rows == 0) {
-        echo "Nincs variáns ehhez a SKU-hoz!\n";
-        $stmt->close();
-        continue;
-    }
+    // --- ALAP ADATOK (első sor) ---
+    $first = $group->fetch_assoc();
+    $group->data_seek(0); // Reset
 
-    $titleRow = $res->fetch_assoc();
-    $title = trim($titleRow['vendor'] ?? '');
-    if (!$title) {
-        echo "ÜRES CÍM – átugorva!\n";
-        $stmt->close();
-        continue;
-    }
+    $input = [
+        'title' => $first['title'],
+        'bodyHtml' => $first['body_html'],
+        'vendor' => $first['vendor'],
+        'productType' => $first['type'],
+        'tags' => explode(',', $first['tags']),
+        'status' => 'DRAFT'
+    ];
 
-    // --- ADATGYŰJTÉS (MINDEN VARIÁNS) ---
-    $res->data_seek(0);
-    $images = []; $variants = []; $options = [];
-    while ($r = $res->fetch_assoc()) {
-        // KÉPEK
-        foreach (['img_src', 'img_src_2', 'img_src_3'] as $k) {
-            if (!empty($r[$k])) {
-                $images[] = ["originalSource" => $r[$k], "mediaContentType" => "IMAGE"];
-            }
-        }
-        // OPCIÓK NEVEI
-        if (!empty($r['option1_value'])) $options[] = $r['option1_name'];
-        if (!empty($r['option2_value'])) $options[] = $r['option2_name'];
+    $handle_base = sanitize_handle($first['handle'] ?: $first['title']);
+    $handle = $handle_base;
+    $media = array_map(fn($url) => ['originalSource' => $url, 'mediaContentType' => 'IMAGE'], array_filter([$first['image1'], $first['image2'], $first['image3']]));
 
-        // VARIÁNS ADATOK
+    // --- VARIÁNSOK + OPCIÓK (javított: trim és empty skip) ---
+    $variants = [];
+    $images = [];
+    $option1_values = [];
+    $option2_values = [];
+
+    while ($row = $group->fetch_assoc()) {
         $variants[] = [
-            "sku" => $r['generated_sku'] ?? '',
-            "price" => number_format((float)($r['price_huf'] ?? 0), 2, '.', ''),
-            "inventoryPolicy" => "DENY",
-            "requiresShipping" => true,
-            "inventoryManagement" => "SHOPIFY",
-            "option1" => !empty($r['option1_value']) ? $r['option1_value'] : null,
-            "option2" => !empty($r['option2_value']) ? $r['option2_value'] : null,
-            "barcode" => !empty($r['barcode']) ? $r['barcode'] : null,
-            "weight" => (float)($r['grams'] / 1000 ?? 0),
-            "weightUnit" => "KILOGRAMS",
-            "qty1" => (int)($r['qty_location_1'] ?? 0),
-            "qty2" => (int)($r['qty_location_2'] ?? 0),
+            'sku' => $row['generated_sku'],
+            'price' => number_format($row['price_huf'] / 100, 2, '.', ''),
+            'barcode' => $row['variant_barcode'],
+            'weight' => (float)$row['variant_grams'],
+            'weightUnit' => 'GRAMS',
+            'taxable' => true,
+            'requiresShipping' => true,
+            'option1' => trim($row['option1_value']),
+            'option2' => trim($row['option2_value']),
+            'qty1' => $row['qty1'],
+            'qty2' => $row['qty2'],
         ];
-    }
-    $stmt->close();
 
-    $images = array_values(array_unique($images, SORT_REGULAR));
-    $options = array_values(array_unique(array_filter($options)));
-    $tags = array_filter(array_map('trim', explode(',', $titleRow['tags'] ?? '')));
-    
-    // ÁTALAKÍTÁS a 2024-04 API-hoz ( productOptions mező )
+        if ($row['image1']) $images[] = $row['image1'];
+        if ($row['image2']) $images[] = $row['image2'];
+        if ($row['image3']) $images[] = $row['image3'];
+
+        if (trim($row['option1_value']) !== '') $option1_values[] = trim($row['option1_value']);
+        if (trim($row['option2_value']) !== '') $option2_values[] = trim($row['option2_value']);
+    }
+
+    $option1 = array_unique(array_filter($option1_values));
+    $option2 = array_unique(array_filter($option2_values));
+
     $productOptions = [];
-    foreach ($options as $optName) {
-        $productOptions[] = ['name' => $optName];
-    }
+    if (count($option1) > 0) $productOptions[] = ['name' => $first['option1_name'] ?: 'Size', 'values' => $option1];
+    if (count($option2) > 0) $productOptions[] = ['name' => $first['option2_name'] ?: 'Color', 'values' => $option2];
 
-    echo "Variánsok száma: " . count($variants) . "<br>";
-    echo "Képek száma: " . count($images) . "<br>";
-    echo "Opciók: " . implode(', ', $options) . "<br>";
+    // --- TERMÉK LÉTREHOZÁS (új modell: opciók nélkül) ---
+    $pid = null;
+    $created = [];
+    $retry = 0;
+    while ($retry < 50 && !$pid) {
+        $input['handle'] = $handle;
+        $resp = productCreate_graphql($token, $shopurl, $input, $media);
 
-    // --- JAVÍTOTT TERMÉK LÉTREHOZÁS (OPTIMALIZÁLT HANDLE-KEZELÉSSEL) ---
-    
-    $base_handle = sanitize_handle($titleRow['handle'] ?: $skuGroup);
-    $product_created = false;
-    $pid = null; // Termék GID
-    $num = null; // Termék numerikus ID (admin linkhez)
-
-    for ($i = 0; $i <= 50; $i++) { // Max 51 próbálkozás (alap, -1, -2, ... -50)
-        $current_handle = ($i == 0) ? $base_handle : "$base_handle-$i";
-        
-        if ($i > 0) {
-            echo "Handle ($base_handle) foglalt, új próba: <b>$current_handle</b><br>";
-        } else {
-            echo "HANDLE: <b>$current_handle</b><br>";
+        if (!empty($resp['data']['productCreate']['userErrors'])) {
+            echo "HIBA (termék létrehozás): " . print_r($resp, true) . "<br>";
+            if (strpos(print_r($resp, true), 'HANDLE_EXISTS') !== false) {
+                $retry++;
+                $handle = $handle_base . '-' . $retry;
+                echo "HANDLE FOGLALT, ÚJ PRÓBA: $handle<br>";
+                continue;
+            }
+            break;
         }
 
-        // 1. $input tömb összerakása az *aktuális* handle-lel
-        $input = [
-            "title" => $title,
-            "handle" => $current_handle, // Aktuális handle használata
-            "descriptionHtml" => $titleRow['body'] ?? '',
-            "vendor" => $titleRow['vendor'] ?? 'Unknown',
-            "productType" => $titleRow['type'] ?? 'Clothing',
-            "tags" => $tags,
-            "status" => "DRAFT"
-            // Az 'options' kulcsot szándékosan töröltük (2024-04 API)
-        ];
-    
-        // 2. A fő productCreate hívás (média és opciók átadásával)
-        $resp = productCreate_graphql($token, $shopurl, $input, $images, $productOptions); 
-
-        // 3. Siker ellenőrzése
         if (!empty($resp['data']['productCreate']['product']['id'])) {
             $pid = $resp['data']['productCreate']['product']['id'];
-            $num = substr($pid, strrpos($pid, '/') + 1);
-            echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$current_handle</a><br>";
-            $product_created = true;
-            break; // Siker, kilépünk a handle-próbálkozó ciklusból
+            echo "TERMÉK LÉTREHOZVA: <a href='https://$shopurl/admin/products/" . base64_decode(substr($pid, strrpos($pid, '/') + 1)) . "'>$pid</a><br>";
         }
-
-        // 4. Hibaellenőrzés: "handle taken" hiba?
-        $is_handle_error = false;
-        if (!empty($resp['data']['productCreate']['userErrors'])) {
-            foreach ($resp['data']['productCreate']['userErrors'] as $err) {
-                // Ellenőrizzük, hogy a hiba a 'handle' mezőre vonatkozik-e
-                if (isset($err['field']) && in_array('handle', $err['field'])) {
-                    $is_handle_error = true;
-                    break;
-                }
-            }
-        } elseif (!empty($resp['errors'])) {
-             // Általános GraphQL hiba (pl. rate limit)
-             echo "GraphQL Hiba: " . ($resp['errors'][0]['message'] ?? 'Ismeretlen hiba') . "<br>";
-        }
-
-        if ($is_handle_error) {
-            // Ez egy "handle foglalt" hiba. A ciklus folytatódik (-1, -2, stb.)
-            usleep(500000); // 0.5mp várakozás
-            continue;
-        } else {
-            // Ez egy VÉGZETES hiba (nem handle hiba, pl. schema, vagy rate limit)
-            echo "HIBA: termék létrehozása sikertelen!<br>";
-            echo "<pre>" . print_r($resp, true) . "</pre>";
-            break; // Kilépünk a handle-próbálkozó ciklusból (de $product_created false marad)
-        }
-    } // -- Handle-próbálkozó ciklus vége
-
-    // 5. Végső ellenőrzés
-    if (!$product_created) {
-        echo "Nem sikerült a termék létrehozása 51 próbálkozás után. Átugrás a következő csoportra.<br>";
-        continue; // Ugrás a fő 'while ($g = $groups->fetch_assoc())' ciklus következő elemére
     }
-    
-    // --- OPCIÓK HOZZÁADÁSA (Külön lépésben) ---
-    /*
-    if ($options) {
-        ... (Ezt a blokkot helyesen hagytad kikommentelve) ...
-    }
-    */
-    
-    // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (JAVÍTVA) ---
-    $varInputs = array_map(fn($v) => [
-        'variantInput' => array_filter([
-            "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
-            "requiresShipping" => $v['requiresShipping'],
-            "inventoryManagement" => $v['inventoryManagement'], // Javított kulcs
-            "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
-            "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
-        ], fn($val) => $val !== null)
-    ], $variants);
 
-    $resp_vars = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $varInputs);
-    $created = $resp_vars['data']['productVariantsBulkCreate']['productVariants'] ?? [];
-
-    if (empty($created)) {
-        echo "HIBA: variánsok létrehozása sikertelen!<br>";
-        echo "<pre>" . print_r($resp_vars, true) . "</pre>";
+    if (!$pid) {
+        echo "Nem sikerült a termék létrehozása 50 próbálkozás után.<br>";
         continue;
     }
-    echo "VARIÁNSOK LÉTREHOZVA: " . count($created) . "<br>";
 
-    // --- KÉSZLET BEÁLLÍTÁSA ---
-    // (A felesleges SÚLY beállítást töröltük, mivel a bulkCreate már kezeli)
-    $qtySets = [];
-    foreach ($created as $i => $cv) {
-        $invId = $cv['inventoryItem']['id'];
-        
-        if (!isset($variants[$i])) {
-             echo "HIBA: Indexelési probléma a variánsoknál ($i).<br>";
-             continue;
+    // --- OPCIÓK HOZZÁADÁSA (új modell) ---
+    if (!empty($productOptions)) {
+        $resp_options = productOptionsCreate_graphql($token, $shopurl, $pid, $productOptions);
+        if (!empty($resp_options['data']['productOptionsCreate']['userErrors'])) {
+            echo "HIBA (opciók hozzáadása): " . print_r($resp_options, true) . "<br>";
+            // Opcionálisan: Töröld a terméket ha hiba
+            continue;
+        } else {
+            echo "OPCIÓK HOZZÁADVA (" . count($productOptions) . " opció)<br>";
         }
-        $v = $variants[$i];
+    }
 
-        // Készlet
-        if ($v['qty1'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc1, "availableQuantity" => $v['qty1']];
-        if ($v['qty2'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc2, "availableQuantity" => $v['qty2']];
+    // --- VARIÁNSOK HOZZÁADÁSA ---
+    $resp_var = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $variants);
+    if (!empty($resp_var['data']['productVariantsBulkCreate']['userErrors'])) {
+        echo "HIBA (variánsok): " . print_r($resp_var, true) . "<br>";
+        continue;
+    } else {
+        $created = $resp_var['data']['productVariantsBulkCreate']['productVariants'];
+        echo "VARIÁNSOK LÉTREHOZVA (" . count($created) . " db)<br>";
+    }
+
+    // --- KÉSZLET BEÁLLÍTÁS ---
+    $qtySets = [];
+    foreach ($created as $v) {
+        $invId = $v['inventoryItem']['id'];
+        $var_data = array_filter($variants, fn($var) => $var['sku'] === $v['sku'])[0];
+        if ($var_data['qty1'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc1, "availableQuantity" => $var_data['qty1']];
+        if ($var_data['qty2'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc2, "availableQuantity" => $var_data['qty2']];
     }
 
     if ($qtySets) {
@@ -285,7 +219,6 @@ while ($g = $groups->fetch_assoc()) {
         break;
     }
 }
-// --- EDDIG TART A CSERE ---
 
 echo "<h2>2. LÉPÉS KÉSZ – Összesen $created_count új termék</h2></pre>";
 $conn->close();
@@ -295,13 +228,3 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
-
-
-
-
-
-
-
-
-
-
