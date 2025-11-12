@@ -82,8 +82,6 @@ while ($g = $groups->fetch_assoc()) {
         continue;
     }
 
-
-
     // --- ADATGYŰJTÉS (MINDEN VARIÁNS) ---
     $res->data_seek(0);
     $images = []; $variants = []; $options = [];
@@ -94,11 +92,11 @@ while ($g = $groups->fetch_assoc()) {
                 $images[] = ["originalSource" => $r[$k], "mediaContentType" => "IMAGE"];
             }
         }
-        // OPCIÓK
+        // OPCIÓK NEVEI
         if (!empty($r['option1_value'])) $options[] = $r['option1_name'];
         if (!empty($r['option2_value'])) $options[] = $r['option2_name'];
 
-        // VARIÁNSOK
+        // VARIÁNS ADATOK
         $variants[] = [
             "sku" => $r['generated_sku'] ?? '',
             "price" => number_format((float)($r['price_huf'] ?? 0), 2, '.', ''),
@@ -118,18 +116,19 @@ while ($g = $groups->fetch_assoc()) {
 
     $images = array_values(array_unique($images, SORT_REGULAR));
     $options = array_values(array_unique(array_filter($options)));
-    // ÚJ FORMÁTUM a 2024-04 API-hoz:
+    $tags = array_filter(array_map('trim', explode(',', $titleRow['tags'] ?? '')));
+    
+    // ÁTALAKÍTÁS a 2024-04 API-hoz ( productOptions mező )
     $productOptions = [];
     foreach ($options as $optName) {
         $productOptions[] = ['name' => $optName];
     }
-    $tags = array_filter(array_map('trim', explode(',', $titleRow['tags'] ?? '')));
 
     echo "Variánsok száma: " . count($variants) . "<br>";
     echo "Képek száma: " . count($images) . "<br>";
     echo "Opciók: " . implode(', ', $options) . "<br>";
 
-    // --- TERMÉK LÉTREHOZÁS (OPTIMALIZÁLT HANDLE-KEZELÉSSEL) ---
+    // --- JAVÍTOTT TERMÉK LÉTREHOZÁS (OPTIMALIZÁLT HANDLE-KEZELÉSSEL) ---
     
     $base_handle = sanitize_handle($titleRow['handle'] ?: $skuGroup);
     $product_created = false;
@@ -145,7 +144,7 @@ while ($g = $groups->fetch_assoc()) {
             echo "HANDLE: <b>$current_handle</b><br>";
         }
 
-        // 1. Állítsuk össze az $input tömböt az *aktuális* handle-lel
+        // 1. $input tömb összerakása az *aktuális* handle-lel
         $input = [
             "title" => $title,
             "handle" => $current_handle, // Aktuális handle használata
@@ -154,10 +153,10 @@ while ($g = $groups->fetch_assoc()) {
             "productType" => $titleRow['type'] ?? 'Clothing',
             "tags" => $tags,
             "status" => "DRAFT"
+            // Az 'options' kulcsot szándékosan töröltük (2024-04 API)
         ];
     
         // 2. A fő productCreate hívás (média és opciók átadásával)
-        // (Figyelem: $images és $productOptions a korábbi adatgyűjtésből jön)
         $resp = productCreate_graphql($token, $shopurl, $input, $images, $productOptions); 
 
         // 3. Siker ellenőrzése
@@ -182,7 +181,6 @@ while ($g = $groups->fetch_assoc()) {
         } elseif (!empty($resp['errors'])) {
              // Általános GraphQL hiba (pl. rate limit)
              echo "GraphQL Hiba: " . ($resp['errors'][0]['message'] ?? 'Ismeretlen hiba') . "<br>";
-             // Itt várakozhatnánk és újrapróbálhatnánk, de most inkább megállunk
         }
 
         if ($is_handle_error) {
@@ -199,36 +197,23 @@ while ($g = $groups->fetch_assoc()) {
 
     // 5. Végső ellenőrzés
     if (!$product_created) {
-        echo "Nem sikerült a termék létrehozása. Átugrás a következő csoportra.<br>";
+        echo "Nem sikerült a termék létrehozása 51 próbálkozás után. Átugrás a következő csoportra.<br>";
         continue; // Ugrás a fő 'while ($g = $groups->fetch_assoc())' ciklus következő elemére
     }
     
-// --- EDDIG TART AZ ÚJ BLOKK ---
-// A szkript innen folytatódik a "... VARIÁNSOK TÖMEGES LÉTREHOZÁSA ..." résszel
-// (a régi "...OPCIÓK HOZZÁADÁSA..." blokkot hagyd kikommentelve, ahogy van)
-
     // --- OPCIÓK HOZZÁADÁSA (Külön lépésben) ---
     /*
     if ($options) {
-        // A JAVÍTOTT productAddOptions_graphql hívása
-        $resp_opt = productAddOptions_graphql($token, $shopurl, $pid, $options); 
-        if (!empty($resp_opt['data']['productUpdate']['product']['id'])) {
-            echo "OPCIÓK HOZZÁADVA<br>";
-        } else {
-            echo "HIBA (opciók): " . print_r($resp_opt, true) . "<br>";
-        }
+        ... (Ezt a blokkot helyesen hagytad kikommentelve) ...
     }
     */
-    // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (4. JAVÍTÁS: Csomagolás) ---
-    // A variánsokat be kell csomagolni egy "variantInput" kulcs alá,
-    // hogy megfeleljenek a [ProductVariantsBulkInput!] típusnak.
-// EZ A JAVÍTOTT KÓD:
-// JAVÍTOTT KÓD (index2new.php ~188. sor):
+    
+    // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (JAVÍTVA) ---
     $varInputs = array_map(fn($v) => [
         'variantInput' => array_filter([
             "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
             "requiresShipping" => $v['requiresShipping'],
-            "inventoryManagement" => $v['inventoryManagement'], // <<<--- ÍGY HELYES
+            "inventoryManagement" => $v['inventoryManagement'], // Javított kulcs
             "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
             "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
         ], fn($val) => $val !== null)
@@ -244,29 +229,18 @@ while ($g = $groups->fetch_assoc()) {
     }
     echo "VARIÁNSOK LÉTREHOZVA: " . count($created) . "<br>";
 
-    // --- SÚLY + KÉSZLET BEÁLLÍTÁSA ---
+    // --- KÉSZLET BEÁLLÍTÁSA ---
+    // (A felesleges SÚLY beállítást töröltük, mivel a bulkCreate már kezeli)
     $qtySets = [];
     foreach ($created as $i => $cv) {
         $invId = $cv['inventoryItem']['id'];
         
-        // Biztosítjuk, hogy a $variants tömb indexei helyesek legyenek
         if (!isset($variants[$i])) {
              echo "HIBA: Indexelési probléma a variánsoknál ($i).<br>";
              continue;
         }
         $v = $variants[$i];
 
-
-        // Súly
-        /*
-        if ($v['weight'] > 0) {
-            $mutation = "mutation { inventoryItemUpdate(id: \"$invId\", input: { weight: { value: {$v['weight']}, unit: KILOGRAMS } }) { inventoryItem { id } } }";
-            $resp_weight = send_graphql_request($token, $shopurl, $mutation);
-            if (!empty($resp_weight['data']['inventoryItemUpdate']['inventoryItem']['id'])) {
-                echo "SÚLY BEÁLLÍTVA: {$v['sku']}<br>";
-            }
-        }
-        */
         // Készlet
         if ($v['qty1'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc1, "availableQuantity" => $v['qty1']];
         if ($v['qty2'] > 0) $qtySets[] = ["inventoryItemId" => $invId, "locationId" => $loc2, "availableQuantity" => $v['qty2']];
@@ -311,6 +285,7 @@ while ($g = $groups->fetch_assoc()) {
         break;
     }
 }
+// --- EDDIG TART A CSERE ---
 
 echo "<h2>2. LÉPÉS KÉSZ – Összesen $created_count új termék</h2></pre>";
 $conn->close();
@@ -320,6 +295,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
