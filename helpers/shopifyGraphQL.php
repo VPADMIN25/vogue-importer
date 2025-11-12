@@ -75,10 +75,10 @@ GRAPHQL;
 // ---------------------------
 // ÚJ TERMÉK LÉTREHOZÁSA
 // ---------------------------
-function productCreate_graphql($token, $shopurl, $input, $media = []) {
+function productCreate_graphql($token, $shopurl, $input, $media = [], $options = []) {
     $q = <<<'GRAPHQL'
-mutation($input: ProductInput!, $media: [CreateMediaInput!]) {
-  productCreate(input: $input, media: $media) {
+mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [String!]) {
+  productCreate(input: $input, media: $media, options: $options) {
     product { id title handle status }
     userErrors { field message }
   }
@@ -87,7 +87,8 @@ GRAPHQL;
 
     return send_graphql_request($token, $shopurl, $q, [
         'input' => $input,
-        'media' => $media
+        'media' => $media,
+        'options' => $options
     ]);
 }
 
@@ -285,4 +286,5 @@ function setVariantInventory_graphql($token, $shopurl, $inventoryItemId, $locati
 }
 
 ?>
+
 
