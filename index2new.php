@@ -121,51 +121,42 @@ while ($g = $groups->fetch_assoc()) {
     if (count($option1) > 0) $productOptions[] = ['name' => $first['option1_name'] ?? 'Size', 'values' => $option1];
     if (count($option2) > 0) $productOptions[] = ['name' => $first['option2_name'] ?? 'Color', 'values' => $option2];
 
-    // --- TERMÉK LÉTREHOZÁS (HANDLE DUPLIKÁCIÓ KEZELÉS HATÉKONYAN) ---
-    $handle_base = sanitize_handle($first['handle'] ?? $first['title'] ?? 'product');
-    $max_tries = 50;
-    $t = 0;
-    $handle = null;
-    
-    echo "Egyedi handle keresése...<br>";
-    while ($t < $max_tries && !$handle) {
-        $t++;
-        $current_handle = ($t > 1) ? $handle_base . '-' . $t : $handle_base;
-        if (isHandleAvailable_graphql($token, $shopurl, $current_handle)) {
-            $handle = $current_handle;
-            echo "Szabad handle talált: $handle (próbálkozás: $t)<br>";
-        } else {
-            echo "Handle foglalt: $current_handle (próbálkozás: $t/$max_tries)<br>";
+    // --- TERMÉK LÉTREHOZÁS (új modell: opciók nélkül) ---
+    $pid = null;
+    $created = [];  // Default to empty array to avoid count(null)
+    $retry = 0;
+    while ($retry < 50 && !$pid) {
+        $input['handle'] = $handle;
+        echo "Termék létrehozási kísérlet (handle: $handle)...\n";
+        $resp = productCreate_graphql($token, $shopurl, $input, $media);
+
+        if (isset($resp['errors'])) {
+            echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
+            break;  // Kilép a loopból
+        }
+
+        if (!empty($resp['data']['productCreate']['userErrors'])) {
+            echo "HIBA (termék létrehozás): " . print_r($resp, true) . "<br>";
+            if (strpos(print_r($resp, true), 'HANDLE_EXISTS') !== false) {
+                $retry++;
+                $handle = $handle_base . '-' . $retry;
+                echo "HANDLE FOGLALT, ÚJ PRÓBA: $handle<br>";
+                continue;
+            }
+            break;
+        }
+
+        if (!empty($resp['data']['productCreate']['product']['id'])) {
+            $pid = $resp['data']['productCreate']['product']['id'];
+            echo "TERMÉK LÉTREHOZVA: <a href='https://$shopurl/admin/products/" . base64_decode(substr($pid, strrpos($pid, '/') + 1)) . "'>$pid</a><br>";
         }
     }
-    
-    if (!$handle) {
-        echo "Nem talált szabad handle-t $max_tries próbálkozás után.<br>";
+
+    if (!$pid) {
+        echo "Nem sikerült a termék létrehozása 50 próbálkozás után.<br>";
         continue;
     }
-    
-    // Most állítsuk be a handle-t és hozzuk létre a terméket (csak egyszer)
-    $input['handle'] = $handle;
-    echo "Termék létrehozása (Handle: $handle)...<br>";
-    $resp = productCreate_graphql($token, $shopurl, $input, $media);
-    
-    if (isset($resp['errors'])) {
-        echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
-        continue;
-    }
-    
-    if (!empty($resp['data']['productCreate']['userErrors'])) {
-        echo "HIBA (userErrors): " . print_r($resp, true) . "<br>";
-        continue;
-    }
-    
-    if (!empty($resp['data']['productCreate']['product']['id'])) {
-        $pid = $resp['data']['productCreate']['product']['id'];
-        echo "TERMÉK LÉTREHOZVA: $pid (Handle: $handle)<br>";
-    } else {
-        echo "HIBA (nincs termék ID - teljes válasz): " . print_r($resp, true) . "<br>";
-        continue;
-    }
+
     // --- OPCIÓK HOZZÁADÁSA (új modell) ---
     if (!empty($productOptions)) {
         echo "Opciók hozzáadása...\n";
@@ -264,4 +255,3 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
-
