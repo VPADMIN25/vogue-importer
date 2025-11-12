@@ -70,27 +70,36 @@ while ($g = $groups->fetch_assoc()) {
     if (!$group || $group->num_rows == 0) continue;
 
     // --- GYŰJTÉS (VARIÁNSOK, MÉDIA, OPCIÓK, ELSŐ ADATOK) ---
-    $variants = $media = $productOptions = [];
+    $variants = [];
+    $productOptions = [];
     $first = null;
     $images = [];
+    $option1_values = [];
+    $option2_values = [];
     while ($row = $group->fetch_assoc()) {
         if (!$first) $first = $row;
         $variants[] = [
-            'sku' => $row['generated_sku'],
-            'barcode' => $row['variant_barcode'],
-            'weight' => (float)$row['variant_grams'],
+            'sku' => $row['generated_sku'] ?? '',
+            'barcode' => $row['variant_barcode'] ?? '',
+            'weight' => (float)($row['variant_grams'] ?? 0),
             'weightUnit' => 'GRAMS',
-            'price' => (float)$row['price_huf'],
-            'qty1' => (int)$row['qty_location_1'],
-            'qty2' => (int)$row['qty_location_2']
+            'price' => (float)($row['price_huf'] ?? 0),
+            'qty1' => (int)($row['qty_location_1'] ?? 0),
+            'qty2' => (int)($row['qty_location_2'] ?? 0)
         ];
         foreach (['image_src', 'image_src_2', 'image_src_3'] as $img_col) {
-            if (!empty($row[$img_col]) && !in_array($row[$img_col], $images)) $images[] = $row[$img_col];
+            if (!empty($row[$img_col ?? '']) && !in_array($row[$img_col], $images)) $images[] = $row[$img_col];
         }
-        if (!empty($row['option1_name']) && !in_array($row['option1_name'], array_column($productOptions, 'name'))) {
-            $productOptions[] = ['name' => $row['option1_name'], 'values' => []];  // Values added later if needed
-        }
-        // ... (continue with option2 if present)
+        if (!empty($row['option1_value'])) $option1_values[] = trim($row['option1_value']);
+        if (!empty($row['option2_value'])) $option2_values[] = trim($row['option2_value']);
+    }
+
+    // --- OPCIÓK ÉPÍTÉSE (értékek gyűjtése) ---
+    if (!empty($option1_values)) {
+        $productOptions[] = ['name' => $first['option1_name'] ?? 'Option1', 'values' => array_unique($option1_values)];
+    }
+    if (!empty($option2_values)) {
+        $productOptions[] = ['name' => $first['option2_name'] ?? 'Option2', 'values' => array_unique($option2_values)];
     }
 
     // --- DUPLIKÁTUM ELLENŐRZÉS SHOPIFY-BEN (SKU ALAPJÁN) ---
@@ -100,7 +109,7 @@ while ($g = $groups->fetch_assoc()) {
     $existing = productQueryBySku_graphql($token, $shopurl, $first_variant_sku);
 
     if ($existing) {
-        $existing_product_gid = $existing['product_gid'];
+        $existing_product_gid = $existing['product_gid'] ?? null;
         echo "MÁR LÉTEZIK Shopify-ben: Termék GID - $existing_product_gid (SKU: $first_variant_sku alapján)\n";
 
         // --- ÖSSZES VARIÁNS LEKÉRDEZÉSE A TERMÉKBŐL ÉS EGYEZTETÉS ---
