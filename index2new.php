@@ -1,5 +1,5 @@
 <?php
-// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ (warningok fix, debug echo-k, descriptionHtml fix)
+// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ (warningok fix, debug echo-k, descriptionHtml fix, bulk create error handling)
 
 ini_set('max_execution_time', 900);  // 15 perc
 set_time_limit(900);
@@ -123,7 +123,7 @@ while ($g = $groups->fetch_assoc()) {
 
     // --- TERMÉK LÉTREHOZÁS (új modell: opciók nélkül) ---
     $pid = null;
-    $created = [];
+    $created = [];  // Default to empty array to avoid count(null)
     $retry = 0;
     while ($retry < 50 && !$pid) {
         $input['handle'] = $handle;
@@ -161,6 +161,10 @@ while ($g = $groups->fetch_assoc()) {
     if (!empty($productOptions)) {
         echo "Opciók hozzáadása...\n";
         $resp_options = productOptionsCreate_graphql($token, $shopurl, $pid, $productOptions);
+        if (isset($resp_options['errors'])) {
+            echo "GRAPHQL TOP-LEVEL HIBA (opciók): " . print_r($resp_options['errors'], true) . "<br>";
+            continue;
+        }
         if (!empty($resp_options['data']['productOptionsCreate']['userErrors'])) {
             echo "HIBA (opciók hozzáadása): " . print_r($resp_options, true) . "<br>";
             continue;
@@ -172,12 +176,20 @@ while ($g = $groups->fetch_assoc()) {
     // --- VARIÁNSOK HOZZÁADÁSA ---
     echo "Variánsok hozzáadása...\n";
     $resp_var = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $variants);
-    if (!empty($resp_var['data']['productVariantsBulkCreate']['userErrors'])) {
-        echo "HIBA (variánsok): " . print_r($resp_var, true) . "<br>";
+    if (isset($resp_var['errors'])) {
+        echo "GRAPHQL TOP-LEVEL HIBA (variánsok): " . print_r($resp_var['errors'], true) . "<br>";
         continue;
-    } else {
+    }
+    if (!empty($resp_var['data']['productVariantsBulkCreate']['userErrors'])) {
+        echo "HIBA (variánsok userErrors): " . print_r($resp_var, true) . "<br>";
+        continue;
+    } 
+    if (!empty($resp_var['data']['productVariantsBulkCreate']['productVariants'])) {
         $created = $resp_var['data']['productVariantsBulkCreate']['productVariants'];
         echo "VARIÁNSOK LÉTREHOZVA (" . count($created) . " db)<br>";
+    } else {
+        echo "HIBA (variánsok: nincs productVariants - teljes válasz): " . print_r($resp_var, true) . "<br>";
+        continue;
     }
 
     // --- KÉSZLET BEÁLLÍTÁS ---
