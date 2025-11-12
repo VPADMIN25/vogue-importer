@@ -73,12 +73,12 @@ GRAPHQL;
 }
 
 // ---------------------------
-// ÚJ TERMÉK LÉTREHOZÁSA
+// ÚJ TERMÉK LÉTREHOZÁSA (HELYES VERZIÓ)
 // ---------------------------
-function productCreate_graphql($token, $shopurl, $input, $media = [], $options = []) {
+function productCreate_graphql($token, $shopurl, $input, $media = []) {
     $q = <<<'GRAPHQL'
-mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [String!]) {
-  productCreate(input: $input, media: $media, options: $options) {
+mutation($input: ProductInput!, $media: [CreateMediaInput!]) {
+  productCreate(input: $input, media: $media) {
     product { id title handle status }
     userErrors { field message }
   }
@@ -87,11 +87,9 @@ GRAPHQL;
 
     return send_graphql_request($token, $shopurl, $q, [
         'input' => $input,
-        'media' => $media,
-        'options' => $options
+        'media' => $media
     ]);
 }
-
 // ---------------------------
 // TERMÉK OPCIÓK CSERÉJE (helyettesíti a régi productUpdate(options:))
 // ---------------------------
@@ -286,5 +284,6 @@ function setVariantInventory_graphql($token, $shopurl, $inventoryItemId, $locati
 }
 
 ?>
+
 
 
