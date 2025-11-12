@@ -166,7 +166,7 @@ while ($g = $groups->fetch_assoc()) {
 
     // --- OPCIÓK HOZZÁADÁSA ---
     if ($options) {
-        $resp_opt = productAddOptions_graphql($token, $shopurl, $pid, $options);
+        $resp_opt = productReplaceOptions_graphql($token, $shopurl, $pid, $options);
         if (!empty($resp_opt['data']['productUpdate']['product']['id'])) {
             echo "OPCIÓK HOZZÁADVA<br>";
         } else {
@@ -260,3 +260,4 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
