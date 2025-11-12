@@ -194,5 +194,21 @@ GRAPHQL;
     return send_graphql_request($token, $shopurl, $q, ['id' => $variantId]);
 }
 
+function isHandleAvailable_graphql($token, $shopurl, $handle) {
+    $q = <<<'GRAPHQL'
+query($handle: String!) {
+  products(first: 1, query: $handle) {
+    nodes {
+      id
+    }
+  }
+}
+GRAPHQL;
+    $variables = ['handle' => "handle:\"$handle\""];
+    $r = send_graphql_request($token, $shopurl, $q, $variables);
+    return empty($r['data']['products']['nodes']);
+}
+
 ?>
+
 
