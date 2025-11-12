@@ -1,5 +1,6 @@
 <?php
-// index2new.php – V22 – TELJES, JAVÍTOTT, HOSSZÚ VERZIÓ
+// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ
+
 ini_set('max_execution_time', 900);  // 15 perc
 set_time_limit(900);
 ini_set('memory_limit', '2G');
@@ -87,7 +88,8 @@ while ($g = $groups->fetch_assoc()) {
     $handle_found = false;
     for ($i = 0; $i <= 50; $i++) {
         $test_handle = ($i == 0) ? $handle : "$base-$i";
-        $test = productCreate_graphql($token, $shopurl, ["title" => "T", "handle" => $test_handle, "status" => "DRAFT"], []);
+        // A handle-kereső a tiszta productCreate-et hívja
+        $test = productCreate_graphql($token, $shopurl, ["title" => "T", "handle" => $test_handle, "status" => "DRAFT"], []); 
         if (!empty($test['data']['productCreate']['product']['id'])) {
             $testId = $test['data']['productCreate']['product']['id'];
             send_graphql_request($token, $shopurl, "mutation { productDelete(input:{id:\"$testId\"}){deletedProductId}}");
@@ -143,7 +145,7 @@ while ($g = $groups->fetch_assoc()) {
     echo "Képek száma: " . count($images) . "<br>";
     echo "Opciók: " . implode(', ', $options) . "<br>";
 
-    // --- TERMÉK LÉTREHOZÁS ---
+    // --- TERMÉK LÉTREHOZÁS (Opciók nélkül) ---
     $input = [
         "title" => $title,
         "handle" => $handle,
@@ -154,7 +156,8 @@ while ($g = $groups->fetch_assoc()) {
         "status" => "DRAFT"
     ];
 
-    $resp = productCreate_graphql($token, $shopurl, $input, $images);
+    // A tiszta productCreate hívása (képekkel)
+    $resp = productCreate_graphql($token, $shopurl, $input, $images); 
     if (empty($resp['data']['productCreate']['product']['id'])) {
         echo "HIBA: termék létrehozása sikertelen!<br>";
         echo "<pre>" . print_r($resp, true) . "</pre>";
@@ -164,19 +167,20 @@ while ($g = $groups->fetch_assoc()) {
     $num = substr($pid, strrpos($pid, '/') + 1);
     echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
 
-    // --- OPCIÓK HOZZÁADÁSA ---
-    
+    // --- OPCIÓK HOZZÁADÁSA (Külön lépésben) ---
     if ($options) {
-        $resp_opt = productReplaceOptions_graphql($token, $shopurl, $pid, $options);
+        // A JAVÍTOTT productAddOptions_graphql hívása
+        $resp_opt = productAddOptions_graphql($token, $shopurl, $pid, $options); 
         if (!empty($resp_opt['data']['productUpdate']['product']['id'])) {
             echo "OPCIÓK HOZZÁADVA<br>";
         } else {
             echo "HIBA (opciók): " . print_r($resp_opt, true) . "<br>";
         }
     }
-    
 
-    // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA ---
+    // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (4. JAVÍTÁS: Csomagolás) ---
+    // A variánsokat be kell csomagolni egy "variantInput" kulcs alá,
+    // hogy megfeleljenek a [ProductVariantsBulkInput!] típusnak.
     $varInputs = array_map(fn($v) => [
         "variantInput" => array_filter([
             "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
@@ -200,7 +204,14 @@ while ($g = $groups->fetch_assoc()) {
     $qtySets = [];
     foreach ($created as $i => $cv) {
         $invId = $cv['inventoryItem']['id'];
+        
+        // Biztosítjuk, hogy a $variants tömb indexei helyesek legyenek
+        if (!isset($variants[$i])) {
+             echo "HIBA: Indexelési probléma a variánsoknál ($i).<br>";
+             continue;
+        }
         $v = $variants[$i];
+
 
         // Súly
         if ($v['weight'] > 0) {
@@ -264,7 +275,3 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
-
-
-
-
