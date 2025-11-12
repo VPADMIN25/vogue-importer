@@ -129,6 +129,10 @@ while ($g = $groups->fetch_assoc()) {
         $input['handle'] = $handle;
         echo "Termék létrehozási kísérlet (handle: $handle)...\n";
         $resp = productCreate_graphql($token, $shopurl, $input, $media);
+        if (isset($resp['errors'])) {
+            echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
+            break;  // Kilép a loopból, hogy ne ismételje
+        }
 
         if (!empty($resp['data']['productCreate']['userErrors'])) {
             echo "HIBA (termék létrehozás): " . print_r($resp, true) . "<br>";
@@ -238,3 +242,4 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
