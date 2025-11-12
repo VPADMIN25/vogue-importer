@@ -1,5 +1,5 @@
 <?php
-// helpers/shopifyGraphQL.php (JAVÍTOTT VERZIÓ: 2025-10 API-val, új termékmodell)
+// helpers/shopifyGraphQL.php (JAVÍTOTT VERZIÓ: 2025-10 API-val, új termékmodell, timeout-ok)
 
 ini_set('max_execution_time', 0);
 set_time_limit(0);
@@ -21,10 +21,15 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
             "X-Shopify-Access-Token: $token"
         ],
         CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode($data)
+        CURLOPT_POSTFIELDS => json_encode($data),
+        CURLOPT_CONNECTTIMEOUT => 10,  // Kapcsolódási timeout
+        CURLOPT_TIMEOUT => 30          // Teljes kérés timeout
     ]);
 
     $resp = curl_exec($ch);
+    if ($resp === false) {
+        echo "CURL HIBA: " . curl_error($ch) . "\n";
+    }
     curl_close($ch);
     usleep(200000); // Rate limit
     return json_decode($resp, true);
