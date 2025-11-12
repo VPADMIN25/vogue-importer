@@ -98,11 +98,11 @@ while ($g = $groups->fetch_assoc()) {
     // --- OPCIÓK ÉPÍTÉSE (értékek object-ként) ---
     $productOptions = [];
     if (!empty($option1_values)) {
-        $values = array_map(fn($val) => ['value' => $val], array_unique($option1_values));
+        $values = array_map(fn($val) => ['name' => $val], array_unique($option1_values));
         $productOptions[] = ['name' => $first['option1_name'] ?? 'Option1', 'values' => $values];
     }
     if (!empty($option2_values)) {
-        $values = array_map(fn($val) => ['value' => $val], array_unique($option2_values));
+        $values = array_map(fn($val) => ['name' => $val], array_unique($option1_values));
         $productOptions[] = ['name' => $first['option2_name'] ?? 'Option2', 'values' => $values];
     }
 
@@ -293,3 +293,4 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
