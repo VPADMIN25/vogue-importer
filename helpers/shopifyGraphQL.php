@@ -9,7 +9,7 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     if (!empty($variables)) $data['variables'] = $variables;
 
     // 1. JAVÍTÁS: A helyes API verzió biztosítása
-    $url = "https://$shopurl/admin/api/2024-04/graphql.json";
+    $url = "https://$shopurl/admin/api/2025-10/graphql.json";
     
     $ch = curl_init($url); 
     curl_setopt_array($ch, [
@@ -56,19 +56,22 @@ GRAPHQL;
 // Ez a verzió már a 2024-04 API-nak megfelelő 'productOptions' argumentumot használja.
 function productCreate_graphql($token, $shopurl, $input, $media = [], $productOptions = []) {
     $q = <<<'GRAPHQL'
-mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [ProductOptionInput!]) {
-  productCreate(input: $input, media: $media, productOptions: $options) {
+mutation($input: ProductInput!, $media: [CreateMediaInput!]) {
+  productCreate(input: $input, media: $media) {
     product { id title handle status }
     userErrors { field message }
   }
 }
 GRAPHQL;
 
-    // A GQL-ben '$options'-nak nevezett változónak a PHP '$productOptions' tömböt adjuk át
+    // Nest productOptions inside the input (as [OptionCreateInput!])
+    if (!empty($productOptions)) {
+        $input['productOptions'] = $productOptions;
+    }
+
     return send_graphql_request($token, $shopurl, $q, [
         'input' => $input, 
-        'media' => $media,
-        'options' => $productOptions // A 2024-04 API-hoz szükséges új változó
+        'media' => $media
     ]);
 }
 
@@ -190,3 +193,4 @@ GRAPHQL;
 }
 
 ?>
+
