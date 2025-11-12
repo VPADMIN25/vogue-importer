@@ -151,7 +151,8 @@ while ($g = $groups->fetch_assoc()) {
         "vendor" => $titleRow['vendor'] ?? 'Unknown',
         "productType" => $titleRow['type'] ?? 'Clothing',
         "tags" => $tags,
-        "status" => "DRAFT"
+        "status" => "DRAFT",
+        "options" => $options
     ];
 
     $resp = productCreate_graphql($token, $shopurl, $input, $images);
@@ -165,6 +166,7 @@ while ($g = $groups->fetch_assoc()) {
     echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
 
     // --- OPCIÓK HOZZÁADÁSA ---
+    /*
     if ($options) {
         $resp_opt = productReplaceOptions_graphql($token, $shopurl, $pid, $options);
         if (!empty($resp_opt['data']['productUpdate']['product']['id'])) {
@@ -173,14 +175,17 @@ while ($g = $groups->fetch_assoc()) {
             echo "HIBA (opciók): " . print_r($resp_opt, true) . "<br>";
         }
     }
+    */
 
     // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA ---
-    $varInputs = array_map(fn($v) => array_filter([
-        "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
-        "requiresShipping" => $v['requiresShipping'], "inventoryManagement" => $v['inventoryManagement'],
-        "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
-        "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
-    ], fn($val) => $val !== null), $variants);
+    $varInputs = array_map(fn($v) => [
+        "variantInput" => array_filter([
+            "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
+            "requiresShipping" => $v['requiresShipping'], "inventoryManagement" => $v['inventoryManagement'],
+            "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
+            "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
+        ], fn($val) => $val !== null)
+    ], $variants);
 
     $resp_vars = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $varInputs);
     $created = $resp_vars['data']['productVariantsBulkCreate']['productVariants'] ?? [];
@@ -260,4 +265,5 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
