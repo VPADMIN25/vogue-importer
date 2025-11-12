@@ -77,16 +77,27 @@ GRAPHQL;
 // Új: OPCIÓK hozzáadása külön mutációval (új modell)
 function productOptionsCreate_graphql($token, $shopurl, $productId, $options) {
     $q = <<<'GRAPHQL'
-mutation($productId: ID!, $productOptions: [ProductOptionCreateInput!]!) {
-  productOptionsCreate(productId: $productId, productOptions: $productOptions) {
-    productOptions { id name values }
-    userErrors { field message }
+mutation($input: ProductOptionsCreateInput!) {
+  productOptionsCreate(input: $input) {
+    productOptions {
+      id
+      name
+      values
+    }
+    userErrors {
+      field
+      message
+    }
   }
 }
 GRAPHQL;
-    return send_graphql_request($token, $shopurl, $q, ['productId' => $productId, 'productOptions' => $options]);
+    $input = [
+        'productId' => $productId,
+        'options' => $options  // Array of ['name' => 'OptionName', 'values' => ['Value1', 'Value2', ...]]
+    ];
+    // Optionally add 'variantStrategy' if needed, e.g., 'variantStrategy' => 'CREATE' or 'LEAVE_AS_IS'
+    return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
 }
-
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
 mutation($id:ID!,$variants:[ProductVariantInput!]!){
@@ -184,3 +195,4 @@ GRAPHQL;
 }
 
 ?>
+
