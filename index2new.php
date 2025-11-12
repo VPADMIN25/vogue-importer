@@ -82,28 +82,7 @@ while ($g = $groups->fetch_assoc()) {
         continue;
     }
 
-    // --- HANDLE GENERÁLÁS (EGYEDI) ---
-    $base = sanitize_handle($titleRow['handle'] ?: $skuGroup);
-    $handle = $base;
-    $handle_found = false;
-    for ($i = 0; $i <= 50; $i++) {
-        $test_handle = ($i == 0) ? $handle : "$base-$i";
-        // A handle-kereső a tiszta productCreate-et hívja
-        $test = productCreate_graphql($token, $shopurl, ["title" => "T", "handle" => $test_handle, "status" => "DRAFT"], []); 
-        if (!empty($test['data']['productCreate']['product']['id'])) {
-            $testId = $test['data']['productCreate']['product']['id'];
-            send_graphql_request($token, $shopurl, "mutation { productDelete(input:{id:\"$testId\"}){deletedProductId}}");
-            $handle = $test_handle;
-            $handle_found = true;
-            break;
-        }
-    }
-    if (!$handle_found) {
-        echo "HANDLE NEM TALÁLHATÓ – átugorva!\n";
-        $stmt->close();
-        continue;
-    }
-    echo "HANDLE: <b>$handle</b><br>";
+
 
     // --- ADATGYŰJTÉS (MINDEN VARIÁNS) ---
     $res->data_seek(0);
@@ -150,27 +129,83 @@ while ($g = $groups->fetch_assoc()) {
     echo "Képek száma: " . count($images) . "<br>";
     echo "Opciók: " . implode(', ', $options) . "<br>";
 
-    // --- TERMÉK LÉTREHOZÁS (Opciók nélkül) ---
-    $input = [
-        "title" => $title,
-        "handle" => $handle,
-        "descriptionHtml" => $titleRow['body'] ?? '',
-        "vendor" => $titleRow['vendor'] ?? 'Unknown',
-        "productType" => $titleRow['type'] ?? 'Clothing',
-        "tags" => $tags,
-        "status" => "DRAFT"
-    ];
+    // --- TERMÉK LÉTREHOZÁS (OPTIMALIZÁLT HANDLE-KEZELÉSSEL) ---
+    
+    $base_handle = sanitize_handle($titleRow['handle'] ?: $skuGroup);
+    $product_created = false;
+    $pid = null; // Termék GID
+    $num = null; // Termék numerikus ID (admin linkhez)
 
-    // A tiszta productCreate hívása (képekkel)
-    $resp = productCreate_graphql($token, $shopurl, $input, $images, $productOptions); 
-    if (empty($resp['data']['productCreate']['product']['id'])) {
-        echo "HIBA: termék létrehozása sikertelen!<br>";
-        echo "<pre>" . print_r($resp, true) . "</pre>";
-        continue;
+    for ($i = 0; $i <= 50; $i++) { // Max 51 próbálkozás (alap, -1, -2, ... -50)
+        $current_handle = ($i == 0) ? $base_handle : "$base_handle-$i";
+        
+        if ($i > 0) {
+            echo "Handle ($base_handle) foglalt, új próba: <b>$current_handle</b><br>";
+        } else {
+            echo "HANDLE: <b>$current_handle</b><br>";
+        }
+
+        // 1. Állítsuk össze az $input tömböt az *aktuális* handle-lel
+        $input = [
+            "title" => $title,
+            "handle" => $current_handle, // Aktuális handle használata
+            "descriptionHtml" => $titleRow['body'] ?? '',
+            "vendor" => $titleRow['vendor'] ?? 'Unknown',
+            "productType" => $titleRow['type'] ?? 'Clothing',
+            "tags" => $tags,
+            "status" => "DRAFT"
+        ];
+    
+        // 2. A fő productCreate hívás (média és opciók átadásával)
+        // (Figyelem: $images és $productOptions a korábbi adatgyűjtésből jön)
+        $resp = productCreate_graphql($token, $shopurl, $input, $images, $productOptions); 
+
+        // 3. Siker ellenőrzése
+        if (!empty($resp['data']['productCreate']['product']['id'])) {
+            $pid = $resp['data']['productCreate']['product']['id'];
+            $num = substr($pid, strrpos($pid, '/') + 1);
+            echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$current_handle</a><br>";
+            $product_created = true;
+            break; // Siker, kilépünk a handle-próbálkozó ciklusból
+        }
+
+        // 4. Hibaellenőrzés: "handle taken" hiba?
+        $is_handle_error = false;
+        if (!empty($resp['data']['productCreate']['userErrors'])) {
+            foreach ($resp['data']['productCreate']['userErrors'] as $err) {
+                // Ellenőrizzük, hogy a hiba a 'handle' mezőre vonatkozik-e
+                if (isset($err['field']) && in_array('handle', $err['field'])) {
+                    $is_handle_error = true;
+                    break;
+                }
+            }
+        } elseif (!empty($resp['errors'])) {
+             // Általános GraphQL hiba (pl. rate limit)
+             echo "GraphQL Hiba: " . ($resp['errors'][0]['message'] ?? 'Ismeretlen hiba') . "<br>";
+             // Itt várakozhatnánk és újrapróbálhatnánk, de most inkább megállunk
+        }
+
+        if ($is_handle_error) {
+            // Ez egy "handle foglalt" hiba. A ciklus folytatódik (-1, -2, stb.)
+            usleep(500000); // 0.5mp várakozás
+            continue;
+        } else {
+            // Ez egy VÉGZETES hiba (nem handle hiba, pl. schema, vagy rate limit)
+            echo "HIBA: termék létrehozása sikertelen!<br>";
+            echo "<pre>" . print_r($resp, true) . "</pre>";
+            break; // Kilépünk a handle-próbálkozó ciklusból (de $product_created false marad)
+        }
+    } // -- Handle-próbálkozó ciklus vége
+
+    // 5. Végső ellenőrzés
+    if (!$product_created) {
+        echo "Nem sikerült a termék létrehozása. Átugrás a következő csoportra.<br>";
+        continue; // Ugrás a fő 'while ($g = $groups->fetch_assoc())' ciklus következő elemére
     }
-    $pid = $resp['data']['productCreate']['product']['id'];
-    $num = substr($pid, strrpos($pid, '/') + 1);
-    echo "LÉTREHOZVA → <a href='https://$shopurl/admin/products/$num' target='_blank'>$handle</a><br>";
+    
+// --- EDDIG TART AZ ÚJ BLOKK ---
+// A szkript innen folytatódik a "... VARIÁNSOK TÖMEGES LÉTREHOZÁSA ..." résszel
+// (a régi "...OPCIÓK HOZZÁADÁSA..." blokkot hagyd kikommentelve, ahogy van)
 
     // --- OPCIÓK HOZZÁADÁSA (Külön lépésben) ---
     /*
@@ -285,6 +320,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
