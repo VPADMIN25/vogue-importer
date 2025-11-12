@@ -211,6 +211,62 @@ while ($g = $groups->fetch_assoc()) {
         }
     }
 
+    // --- VARIÁNSOK ÁTALAKÍTÁSA ProductVariantsBulkInput struktúrára ---
+    foreach ($variants as &$var) {
+        // Közvetlen mezők (pl. barcode, price) maradnak
+        $var['barcode'] = $var['barcode'] ?? null;
+        $var['price'] = $var['price'] ?? 0.0;
+    
+        // Opciók: VariantOptionValueInput tömb
+        $var['optionValues'] = [];
+        if (!empty($var['option1'])) {
+            $var['optionValues'][] = [
+                'optionName' => $first['option1_name'] ?? 'Size',  // Használd a DB-ből származó opciónevet, ha van; különben default
+                'name' => $var['option1']
+            ];
+        }
+        if (!empty($var['option2'])) {
+            $var['optionValues'][] = [
+                'optionName' => $first['option2_name'] ?? 'Color',  // Ugyanúgy
+                'name' => $var['option2']
+            ];
+        }
+    
+        // InventoryItem: InventoryItemInput object (SKU, súly stb.)
+        $var['inventoryItem'] = [
+            'sku' => $var['sku'] ?? null,
+            'measurement' => [
+                'weight' => [
+                    'value' => $var['weight'] ?? 0.0,
+                    'unit' => $var['weightUnit'] ?? 'GRAMS'
+                ]
+            ],
+            // Opcionális: 'tracked' => true, 'requiresShipping' => true, stb., ha kell
+        ];
+    
+        // Készlet: InventoryLevelInput tömb (helyett qty1/qty2)
+        $var['inventoryLevels'] = [];
+        if (($var['qty1'] ?? 0) > 0) {
+            $var['inventoryLevels'][] = [
+                'locationId' => $loc1,
+                'available' => $var['qty1']
+            ];
+        }
+        if (($var['qty2'] ?? 0) > 0) {
+            $var['inventoryLevels'][] = [
+                'locationId' => $loc2,
+                'available' => $var['qty2']
+            ];
+        }
+    
+        // Töröld a felesleges kulcsokat, hogy ne legyen típusütközés
+        unset($var['sku'], $var['weight'], $var['weightUnit'], $var['qty1'], $var['qty2'], $var['option1'], $var['option2']);
+    
+        // Opcionális extra mezők, ha kellenek (pl. default értékek)
+        $var['inventoryPolicy'] = 'DENY';  // Ha engedélyezni akarod a backorder-t, akkor 'CONTINUE'
+        $var['taxable'] = true;  // Ha adóztatható
+    }
+    
     // --- VARIÁNSOK HOZZÁADÁSA ---
     echo "Variánsok hozzáadása...\n";
     $resp_var = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $variants);
@@ -293,4 +349,5 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
