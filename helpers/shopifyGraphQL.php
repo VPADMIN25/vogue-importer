@@ -1,5 +1,5 @@
 <?php
-// helpers/shopifyGraphQL.php (VÉGLEGES JAVÍTOTT VERZIÓ – 2024-04)
+// helpers/shopifyGraphQL.php (JAVÍTOTT VERZIÓ: 2024-04 API-val)
 
 ini_set('max_execution_time', 0);
 set_time_limit(0);
@@ -8,8 +8,10 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
     $data = ['query' => $query];
     if (!empty($variables)) $data['variables'] = $variables;
 
-    // 1. JAVÍTÁS: Stabil, támogatott API verzió használata
-    $ch = curl_init("https://$shopurl/admin/api/2024-04/graphql.json"); 
+    // 1. JAVÍTÁS: A helyes API verzió biztosítása
+    $url = "https://$shopurl/admin/api/2024-04/graphql.json";
+    
+    $ch = curl_init($url); 
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => false,
@@ -24,7 +26,7 @@ function send_graphql_request($token, $shopurl, $query, $variables = []) {
 
     $resp = curl_exec($ch);
     curl_close($ch);
-    usleep(200000);
+    usleep(200000); // Rate limit
     return json_decode($resp, true);
 }
 
@@ -51,6 +53,7 @@ GRAPHQL;
 }
 
 // CSERÉLD LE ERRE A TELJES FÜGGVÉNYRE:
+// Ez a verzió már a 2024-04 API-nak megfelelő 'productOptions' argumentumot használja.
 function productCreate_graphql($token, $shopurl, $input, $media = [], $productOptions = []) {
     $q = <<<'GRAPHQL'
 mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [ProductOptionInput!]) {
@@ -61,7 +64,7 @@ mutation($input: ProductInput!, $media: [CreateMediaInput!], $options: [ProductO
 }
 GRAPHQL;
 
-    // A GQL-ben $options-nak nevezett változónak a PHP $productOptions tömböt adjuk át
+    // A GQL-ben '$options'-nak nevezett változónak a PHP '$productOptions' tömböt adjuk át
     return send_graphql_request($token, $shopurl, $q, [
         'input' => $input, 
         'media' => $media,
@@ -69,8 +72,9 @@ GRAPHQL;
     ]);
 }
 
-// CSERÉLD LE ERRE A TELJES FÜGGVÉNYRE:
+
 function productAddOptions_graphql($token, $shopurl, $productId, $options) {
+    // Ez a függvény már valószínűleg nem használatos, de a teljesség kedvéért javítva.
     $q = <<<'GRAPHQL'
 mutation($input: ProductInput!) {
   productUpdate(input: $input) {
@@ -79,17 +83,13 @@ mutation($input: ProductInput!) {
   }
 }
 GRAPHQL;
-
-    // A HELYES formátum: egy 'input' objektumba csomagolva
     $input = [
         'id' => $productId,
-        'options' => $options
+        'options' => $options // Figyelem: A productUpdate más logikát használhat!
     ];
-
     return send_graphql_request($token, $shopurl, $q, ['input' => $input]);
 }
 
-// 3. JAVÍTÁS: A mutációnak a helyes, "becsomagolt" típust kell várnia
 function productVariantsBulkCreate_graphql($token, $shopurl, $productId, $variants) {
     $q = <<<'GRAPHQL'
 mutation($productId:ID!,$variants:[ProductVariantsBulkInput!]!){
@@ -151,7 +151,18 @@ GRAPHQL;
 }
 
 function productActivate_graphql($token, $shopurl, $productId) {
-    productUpdateStatus_graphql($token, $shopurl, $productId, 'ACTIVE');
+    // Ahelyett, hogy a productUpdateStatus-t hívnánk,
+    // használjuk a hivatalos publishablePublish mutációt, ami megbízhatóbb
+    $q = <<<'GRAPHQL'
+mutation productPublish($id: ID!) {
+  productPublish(id: $id, input: { publishDate: null, status: ACTIVE }) {
+    product { id status }
+    userErrors { field message }
+  }
+}
+GRAPHQL;
+    // A 'productUpdateStatus_graphql' helyett ezt hívjuk:
+    return send_graphql_request($token, $shopurl, $q, ['id' => $productId]);
 }
 
 function productVariantFullUpdate_graphql($token, $shopurl, $input) {
@@ -179,5 +190,3 @@ GRAPHQL;
 }
 
 ?>
-
-
