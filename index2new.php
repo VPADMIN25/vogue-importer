@@ -151,11 +151,10 @@ while ($g = $groups->fetch_assoc()) {
         "vendor" => $titleRow['vendor'] ?? 'Unknown',
         "productType" => $titleRow['type'] ?? 'Clothing',
         "tags" => $tags,
-        "status" => "DRAFT",
-        "options" => $options
+        "status" => "DRAFT"
     ];
 
-    $resp = productCreate_graphql($token, $shopurl, $input, $images);
+    $resp = productCreate_graphql($token, $shopurl, $input, $images, $options);
     if (empty($resp['data']['productCreate']['product']['id'])) {
         echo "HIBA: termék létrehozása sikertelen!<br>";
         echo "<pre>" . print_r($resp, true) . "</pre>";
@@ -265,5 +264,6 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
