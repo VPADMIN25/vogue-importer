@@ -158,7 +158,6 @@ while ($g = $groups->fetch_assoc()) {
         "vendor" => $titleRow['vendor'] ?? 'Unknown',
         "productType" => $titleRow['type'] ?? 'Clothing',
         "tags" => $tags,
-        "options" => $options,
         "status" => "DRAFT"
     ];
 
@@ -286,6 +285,7 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
 
