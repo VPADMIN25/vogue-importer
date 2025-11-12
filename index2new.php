@@ -1,5 +1,5 @@
 <?php
-// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ (warningok fix, debug echo-k)
+// index2new.php – VÉGLEGES JAVÍTOTT VERZIÓ (warningok fix, debug echo-k, descriptionHtml fix)
 
 ini_set('max_execution_time', 900);  // 15 perc
 set_time_limit(900);
@@ -75,7 +75,7 @@ while ($g = $groups->fetch_assoc()) {
 
     $input = [
         'title' => $first['title'] ?? '',
-        'bodyHtml' => $first['body_html'] ?? '',
+        'descriptionHtml' => $first['body_html'] ?? '',  // Javítva: descriptionHtml
         'vendor' => $first['vendor'] ?? '',
         'productType' => $first['type'] ?? '',
         'tags' => explode(',', $first['tags'] ?? ''),
@@ -129,9 +129,10 @@ while ($g = $groups->fetch_assoc()) {
         $input['handle'] = $handle;
         echo "Termék létrehozási kísérlet (handle: $handle)...\n";
         $resp = productCreate_graphql($token, $shopurl, $input, $media);
+
         if (isset($resp['errors'])) {
             echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
-            break;  // Kilép a loopból, hogy ne ismételje
+            break;  // Kilép a loopból
         }
 
         if (!empty($resp['data']['productCreate']['userErrors'])) {
@@ -242,4 +243,3 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
-
