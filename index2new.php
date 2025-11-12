@@ -181,12 +181,15 @@ while ($g = $groups->fetch_assoc()) {
     // --- VARIÁNSOK TÖMEGES LÉTREHOZÁSA (4. JAVÍTÁS: Csomagolás) ---
     // A variánsokat be kell csomagolni egy "variantInput" kulcs alá,
     // hogy megfeleljenek a [ProductVariantsBulkInput!] típusnak.
-    $varInputs = array_map(fn($v) => array_filter([
-        "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
-        "requiresShipping" => $v['requiresShipping'], "inventoryManagement" => $v['inventoryManagement'],
-        "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
-        "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
-    ], fn($val) => $val !== null), $variants);
+// EZ A JAVÍTOTT KÓD:
+    $varInputs = array_map(fn($v) => [
+        'variantInput' => array_filter([  // <<<--- ITT A HIÁNYZÓ CSOMAGOLÁS
+            "sku" => $v['sku'], "price" => $v['price'], "inventoryPolicy" => $v['inventoryPolicy'],
+            "requiresShipping" => $v['requiresShipping'], "inventoryManagement" => $v['management'],
+            "option1" => $v['option1'], "option2" => $v['option2'], "barcode" => $v['barcode'],
+            "weight" => $v['weight'], "weightUnit" => $v['weightUnit']
+        ], fn($val) => $val !== null)
+    ], $variants);
 
     $resp_vars = productVariantsBulkCreate_graphql($token, $shopurl, $pid, $varInputs);
     $created = $resp_vars['data']['productVariantsBulkCreate']['productVariants'] ?? [];
@@ -273,4 +276,5 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
