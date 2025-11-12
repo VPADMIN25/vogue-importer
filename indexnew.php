@@ -146,7 +146,7 @@ foreach ($feeds as $feed) {
 
             $needs_update = ($row['price_huf'] != $final_price || $row['qty_location_1'] != $qty1 || $row['qty_location_2'] != $qty2 || $row['needs_update'] == 20) ? 10 : $row['needs_update'];
             
-            $stmt_update->bind_param("diiisssssssssssssssssi",
+            $stmt_update->bind_param("diiisssssssssssssssssii",
                 $final_price, $qty1, $qty2, $needs_update, $run_timestamp,
                 $variantSkuGroup, $generated_sku, 
                 $data[$map['handle']], $data[$map['title']], $data[$map['body (html)'] ?? ''],
@@ -211,3 +211,4 @@ echo "<hr><b>Feldolgozva: $total_rows | Új (létrehozásra vár): $total_create
 echo "<h2>1. LÉPÉS KÉSZ – ADATBÁZIS SZINKRONIZÁLVA</h2></pre>";
 $conn->close();
 ?>
+
