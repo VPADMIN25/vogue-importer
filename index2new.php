@@ -69,91 +69,116 @@ while ($g = $groups->fetch_assoc()) {
 
     if (!$group || $group->num_rows == 0) continue;
 
-    // --- ALAP ADATOK (első sor) ---
-    $first = $group->fetch_assoc();
-    $group->data_seek(0); // Reset
+    // --- GYŰJTÉS (VARIÁNSOK, MÉDIA, OPCIÓK, ELSŐ ADATOK) ---
+    $variants = $media = $productOptions = [];
+    $first = null;
+    $images = [];
+    while ($row = $group->fetch_assoc()) {
+        if (!$first) $first = $row;
+        $variants[] = [
+            'sku' => $row['generated_sku'],
+            'barcode' => $row['variant_barcode'],
+            'weight' => (float)$row['variant_grams'],
+            'weightUnit' => 'GRAMS',
+            'price' => (float)$row['price_huf'],
+            'qty1' => (int)$row['qty_location_1'],
+            'qty2' => (int)$row['qty_location_2']
+        ];
+        foreach (['image_src', 'image_src_2', 'image_src_3'] as $img_col) {
+            if (!empty($row[$img_col]) && !in_array($row[$img_col], $images)) $images[] = $row[$img_col];
+        }
+        if (!empty($row['option1_name']) && !in_array($row['option1_name'], array_column($productOptions, 'name'))) {
+            $productOptions[] = ['name' => $row['option1_name'], 'values' => []];  // Values added later if needed
+        }
+        // ... (continue with option2 if present)
+    }
 
+    // --- DUPLIKÁTUM ELLENŐRZÉS SHOPIFY-BEN (SKU ALAPJÁN) ---
+    echo "Duplikátum ellenőrzés Shopify-ben...\n";
+    $existing_product_gid = null;
+    $first_variant_sku = $variants[0]['sku'];  // Ellenőrizzük az első variáns SKU-ját (generated_sku)
+    $existing = productQueryBySku_graphql($token, $shopurl, $first_variant_sku);
+
+    if ($existing) {
+        $existing_product_gid = $existing['product_gid'];
+        echo "MÁR LÉTEZIK Shopify-ben: Termék GID - $existing_product_gid (SKU: $first_variant_sku alapján)\n";
+
+        // --- ÖSSZES VARIÁNS LEKÉRDEZÉSE A TERMÉKBŐL ÉS EGYEZTETÉS ---
+        $resp_variants = getProductVariants_graphql($token, $shopurl, $existing_product_gid);
+        if (empty($resp_variants['data']['product']['variants']['nodes'])) {
+            echo "HIBA: Nem sikerült lekérdezni a variánsokat - $existing_product_gid\n";
+            continue;
+        }
+
+        $shopify_variants = $resp_variants['data']['product']['variants']['nodes'];
+        $matched_count = 0;
+
+        foreach ($variants as $db_variant) {
+            $matched = false;
+            foreach ($shopify_variants as $shop_variant) {
+                if ($shop_variant['sku'] === $db_variant['sku']) {
+                    // --- DB FRISSÍTÉS (GID-ek) ---
+                    $upd = $conn->prepare("UPDATE shopifyproducts SET shopifyproductid=?, shopifyvariantid=?, shopifyinventoryid=?, needs_update=0 WHERE generated_sku=?");
+                    $upd->bind_param("ssss", $existing_product_gid, $shop_variant['id'], $shop_variant['inventoryItem']['id'], $db_variant['sku']);
+                    if ($upd->execute()) {
+                        echo "DB FRISSÍTVE (meglévő): {$db_variant['sku']}\n";
+                        $matched_count++;
+                    } else {
+                        echo "DB HIBA: " . $upd->error . "\n";
+                    }
+                    $matched = true;
+                    break;
+                }
+            }
+            if (!$matched) {
+                echo "FIGYELEM: Nem talált egyező variáns Shopify-ben: {$db_variant['sku']} - manuális ellenőrzés javasolt!\n";
+            }
+        }
+
+        if ($matched_count === count($variants)) {
+            echo "TELJES EGYEZÉS: $matched_count variáns - kihagyjuk a létrehozást.\n";
+            $created_count++;  // Számoljuk, de nem új
+            continue;  // Ugrás a következő csoportra
+        } else {
+            echo "RÉSZLEGES EGYEZÉS: Csak $matched_count / " . count($variants) . " - folytatjuk létrehozással (de manuálisan ellenőrizd)!\n";
+            // Itt dönthetsz: continue vagy proceed to create (de duplicate kockázata)
+        }
+    } else {
+        echo "Nincs duplikátum - folytatjuk létrehozással.\n";
+    }
+
+    // --- TERMÉK BEMENET (HANDLE GENERÁLÁS, STB.) ---
     $input = [
         'title' => $first['title'] ?? '',
-        'descriptionHtml' => $first['body_html'] ?? '',  // Javítva: descriptionHtml
+        'descriptionHtml' => $first['body_html'] ?? '',
         'vendor' => $first['vendor'] ?? '',
         'productType' => $first['type'] ?? '',
         'tags' => explode(',', $first['tags'] ?? ''),
         'status' => 'DRAFT'
+        // NINCS 'handle' => ... – kihagyjuk!
     ];
 
-    $handle_base = sanitize_handle($first['handle'] ?? $first['title'] ?? 'product');
-    $handle = $handle_base;
-    $media = array_map(fn($url) => ['originalSource' => $url, 'mediaContentType' => 'IMAGE'], array_filter([
-        $first['image1'] ?? '',
-        $first['image2'] ?? '',
-        $first['image3'] ?? ''
-    ]));
+    $media = array_map(fn($url) => ['originalSource' => $url, 'mediaContentType' => 'IMAGE'], $images);
 
-    // --- VARIÁNSOK + OPCIÓK (javított: ?? defaultok) ---
-    $variants = [];
-    $option1_values = [];
-    $option2_values = [];
+    echo "Termék létrehozása (handle auto-generált a Shopify által)...<br>";
+    $resp = productCreate_graphql($token, $shopurl, $input, $media);
 
-    while ($row = $group->fetch_assoc()) {
-        $variants[] = [
-            'sku' => $row['generated_sku'] ?? '',
-            'price' => number_format(($row['price_huf'] ?? 0) / 100, 2, '.', ''),
-            'barcode' => $row['variant_barcode'] ?? '',
-            'weight' => (float)($row['variant_grams'] ?? 0),
-            'weightUnit' => 'GRAMS',
-            'taxable' => true,
-            'requiresShipping' => true,
-            'option1' => trim($row['option1_value'] ?? ''),
-            'option2' => trim($row['option2_value'] ?? ''),
-            'qty1' => $row['qty1'] ?? 0,
-            'qty2' => $row['qty2'] ?? 0,
-        ];
-
-        if (trim($row['option1_value'] ?? '') !== '') $option1_values[] = trim($row['option1_value']);
-        if (trim($row['option2_value'] ?? '') !== '') $option2_values[] = trim($row['option2_value']);
+    if (isset($resp['errors'])) {
+        echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
+        continue;
     }
 
-    $option1 = array_unique(array_filter($option1_values));
-    $option2 = array_unique(array_filter($option2_values));
-
-    $productOptions = [];
-    if (count($option1) > 0) $productOptions[] = ['name' => $first['option1_name'] ?? 'Size', 'values' => $option1];
-    if (count($option2) > 0) $productOptions[] = ['name' => $first['option2_name'] ?? 'Color', 'values' => $option2];
-
-    // --- TERMÉK LÉTREHOZÁS (új modell: opciók nélkül) ---
-    $pid = null;
-    $created = [];  // Default to empty array to avoid count(null)
-    $retry = 0;
-    while ($retry < 50 && !$pid) {
-        $input['handle'] = $handle;
-        echo "Termék létrehozási kísérlet (handle: $handle)...\n";
-        $resp = productCreate_graphql($token, $shopurl, $input, $media);
-
-        if (isset($resp['errors'])) {
-            echo "GRAPHQL TOP-LEVEL HIBA: " . print_r($resp['errors'], true) . "<br>";
-            break;  // Kilép a loopból
-        }
-
-        if (!empty($resp['data']['productCreate']['userErrors'])) {
-            echo "HIBA (termék létrehozás): " . print_r($resp, true) . "<br>";
-            if (strpos(print_r($resp, true), 'HANDLE_EXISTS') !== false) {
-                $retry++;
-                $handle = $handle_base . '-' . $retry;
-                echo "HANDLE FOGLALT, ÚJ PRÓBA: $handle<br>";
-                continue;
-            }
-            break;
-        }
-
-        if (!empty($resp['data']['productCreate']['product']['id'])) {
-            $pid = $resp['data']['productCreate']['product']['id'];
-            echo "TERMÉK LÉTREHOZVA: <a href='https://$shopurl/admin/products/" . base64_decode(substr($pid, strrpos($pid, '/') + 1)) . "'>$pid</a><br>";
-        }
+    if (!empty($resp['data']['productCreate']['userErrors'])) {
+        echo "HIBA (userErrors): " . print_r($resp, true) . "<br>";
+        continue;
     }
 
-    if (!$pid) {
-        echo "Nem sikerült a termék létrehozása 50 próbálkozás után.<br>";
+    if (!empty($resp['data']['productCreate']['product']['id'])) {
+        $pid = $resp['data']['productCreate']['product']['id'];
+        $generated_handle = $resp['data']['productCreate']['product']['handle'] ?? 'unknown';
+        echo "TERMÉK LÉTREHOZVA: $pid (Handle: $generated_handle)<br>";
+    } else {
+        echo "HIBA (nincs termék ID - teljes válasz): " . print_r($resp, true) . "<br>";
         continue;
     }
 
