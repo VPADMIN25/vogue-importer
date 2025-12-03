@@ -247,10 +247,12 @@ while ($g = $groups->fetch_assoc()) {
         // Készlet: InventoryLevelInput tömb (helyett qty1/qty2)
         $var['inventoryLevels'] = [];
         if (($var['qty1'] ?? 0) > 0) {
+            echo $qty1, $loc1
             $var['inventoryLevels'][] = [
                 'locationId' => $loc1,
                 'available' => $var['qty1']
             ];
+            
         }
         if (($var['qty2'] ?? 0) > 0) {
             $var['inventoryLevels'][] = [
@@ -349,5 +351,6 @@ function sanitize_handle($t) {
     return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($t ?: 'product')), '-') ?: 'product';
 }
 ?>
+
 
 
